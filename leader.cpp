@@ -20,8 +20,8 @@ LoggerPtr LeaderLogger(Logger::getLogger("leader"));
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
 int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
-int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
-int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
+//int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
+//int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
 
 void* commander(void*);
 void* scout(void*);
@@ -53,8 +53,8 @@ void* scout(void*);
 #define MANIPULATE_LEADER_PLIST(ACC_CMD_MAP,PROP_LIST) \
 					for(i=0;i<MAX_SLOTS;i++) \
 					{ \
-						if(ACC_CMD_MAP[i] != -1) \
-						PROP_LIST.command[i] = ACC_CMD_MAP[i]; \
+						if(ACC_CMD_MAP[i] != -1 && PROP_LIST.command[i] != -1) \
+							PROP_LIST.command[i] = ACC_CMD_MAP[i]; \
 					} 
 
 enum LEADER_STATUS
@@ -278,7 +278,7 @@ int main(int argc,char **argv)
 //retrive recv_pid
 				recv_pid = atoi(strtok_r(NULL,DELIMITER,&tok));
 #if DEBUG==1
-				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << "from: " << recv_pid << "\n");
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << " from: " << recv_pid << "\n");
 				//printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
 #endif		
 			if(strcmp(data,"PROPOSE") == 0)
@@ -315,7 +315,7 @@ int main(int argc,char **argv)
 						comm_create_args[count_commanders].my_pid = count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER;
 						comm_create_args[count_commanders].my_pval.ballot = leader_state.ballot; 
 						comm_create_args[count_commanders].my_pval.slot_number = slot_number;
-						comm_create_args[count_commanders].my_pval.command = command;
+						comm_create_args[count_commanders].my_pval.command = command; 
 						rc = pthread_create(&commander_thread[count_commanders], NULL, commander, (void *)&comm_create_args[count_commanders]);
 #if DEBUG==1
 						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "created commander thread" << count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER << "\n");
@@ -376,7 +376,7 @@ printf("!!!!here\n");
 						comm_create_args[count_commanders].my_pid = count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER;
 						comm_create_args[count_commanders].my_pval.ballot = leader_state.ballot; 
 						comm_create_args[count_commanders].my_pval.slot_number = i;
-						comm_create_args[count_commanders].my_pval.command = leader_state.plist.command[i];
+						comm_create_args[count_commanders].my_pval.command = leader_state.plist.command[i]; 
 						rc = pthread_create(&commander_thread[count_commanders], NULL, commander, (void *)&comm_create_args[count_commanders]);
 						count_commanders++;
 
@@ -420,6 +420,31 @@ printf("!!!!here\n");
 						rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 						count_scouts++;
 				}
+			}
+			else if(strcmp(data,"DECISION") == 0)
+			{
+				//recved from commander 
+				//expects data in the format
+				//DECISION:COMMANDER_ID:SLOT_NUMBER:COMMAND:
+
+				//retrive decision components
+#if DEBUG == 1
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received decision \n");
+#endif
+
+				slot_number = atoi(strtok_r(NULL,DELIMITER,&tok));
+#if DEBUG == 1
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " slot "  << slot_number << "\n");
+#endif
+				command = atoi(strtok_r(NULL,DELIMITER,&tok));
+#if DEBUG == 1
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " command "  << command << "\n");
+#endif
+				//remove entry from proposal list
+				leader_state.plist.command[slot_number] = -1;
+#if DEBUG == 1
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " removed entry for slot "  << slot_number << "\n");
+#endif
 			}
 			else
 			{

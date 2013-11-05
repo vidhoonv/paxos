@@ -39,8 +39,8 @@ LoggerPtr ScoutLogger(Logger::getLogger("scout"));
 						} 
  	
 extern int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS], LEADER_PORT_LIST[MAX_LEADERS] ;
-extern int REPLICA_PORT_LIST[MAX_REPLICAS], COMMANDER_PORT_LIST[MAX_COMMANDERS];
-extern int SCOUT_PORT_LIST[MAX_SCOUTS];
+extern int REPLICA_PORT_LIST[MAX_REPLICAS];
+//extern int SCOUT_PORT_LIST[MAX_SCOUTS], COMMANDER_PORT_LIST[MAX_COMMANDERS];
 
 bool send_preemption(int,int,char[],struct sockaddr, socklen_t);
 int ballot_compare(struct BALLOT_NUMBER,struct BALLOT_NUMBER);
@@ -65,7 +65,7 @@ bool configure_scout(int my_pid,struct COMM_DATA *comm_scout)
 	}
     	listener_addr.sin_family = AF_INET;
    	listener_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	listener_addr.sin_port = htons(SCOUT_PORT_LIST[my_pid]); 
+	listener_addr.sin_port = htons(SCOUT_PORT_STARTER+my_pid); 
 
 	if (bind(listener_fd, (struct sockaddr *) &listener_addr, sizeof(listener_addr)) < 0)
 	{
