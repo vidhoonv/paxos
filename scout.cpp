@@ -1,6 +1,18 @@
+//logging
+#include <log4cxx/logger.h>
+#include <log4cxx/xml/domconfigurator.h>
+
 #include<stdio.h>
 #include<pthread.h>
 #include "pax_types.h"
+
+
+using namespace log4cxx;
+using namespace log4cxx::xml;
+using namespace log4cxx::helpers;
+
+// Define static logger variable
+LoggerPtr ScoutLogger(Logger::getLogger("scout"));
 
 #define MAX_SET_SIZE 100
 #define TALKER_SCOUT scout_comm.comm_fd[TALKER_INDEX]
@@ -20,7 +32,6 @@
 						{ \
 							BALLOT_STRING_PREP(bstr,PVAL_SET[i].ballot); \
 							strcat(STR,bstr); \
-							strcat(STR,DELIMITER_SEC);  \
 							sprintf(STR,"%s%d",STR,PVAL_SET[i].slot_number); \
 							strcat(STR,DELIMITER_SEC);  \
 							sprintf(STR,"%s%d",STR,PVAL_SET[i].command); \
@@ -172,6 +183,9 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 	char buff_copy[BUFSIZE];
 //thread data struct
 	struct SCOUT_THREAD_ARG *args;
+
+//configure logger
+ DOMConfigurator::configure("scout_log_config.xml");
 //configure scout data
 	args = (struct SCOUT_THREAD_ARG*) thread_data;
 
@@ -183,18 +197,20 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 	hp = gethostbyname(hostname);
 	if (hp == NULL) 
 	{ 
-		printf("\n%s: unknown host.\n", hostname); 
+		LOG4CXX_TRACE(ScoutLogger,hostname << " : unknown host\n");
 		return NULL; 
 	} 
 
 //configure sender and listener
 	if(configure_scout(my_pid,&scout_comm))
 	{
-		printf("Scout id: %d configured successfully\n",my_pid);
+		LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " configured successfully\n");
+		//printf("Scout id: %d configured successfully\n",my_pid);
 	}
 	else
 	{
-		printf("Error in config of scout id: %d\n",my_pid);
+		LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " config error \n");
+		//printf("Error in config of scout id: %d\n",my_pid);
 		return NULL;
 	}
 
@@ -219,12 +235,14 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 	if(broadcast_ballot(TALKER_SCOUT,my_pid,my_ballot,acceptor_addr,acceptor_addr_len))
 	{
 #if DEBUG == 1
-		printf("pval broadcasted at scout %d\n",my_pid);
+		LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " pval broadcasted \n");
+	//	printf("pval broadcasted at scout %d\n",my_pid);
 #endif
 	}
 	else
 	{
-		printf("broadcast of received pval failed at scout %d\n",my_pid);	
+		LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " pval broadcast failed \n");
+		//printf("broadcast of received pval failed at scout %d\n",my_pid);	
 		return NULL;	
 	}
 
@@ -241,7 +259,8 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 
 		if(ret <0)
 	   	{ 
-	     		printf("\nSelect error\n");   
+			LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " select error \n");
+	     		//printf("\nSelect error\n");   
 	     		return NULL;
 	   	} 
 
@@ -253,12 +272,13 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 		
 		 	if (nread < 0)
 		       	{
+				LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " recv from failed \n");
 		        	perror("recvfrom ");
             			close(LISTENER_SCOUT);
             			return NULL;
         		}		
 			recv_buff[nread] = 0;
-  			printf("received: %s\n", recv_buff);
+			//printf("received: %s\n", recv_buff);
 
 			strcpy(buff_copy,recv_buff);			
 			data = strtok_r(buff_copy,DELIMITER,&tok);
@@ -266,7 +286,8 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 //retrive recv_pid
 				recv_pid = atoi(strtok_r(NULL,DELIMITER,&tok));
 #if DEBUG==1
-				printf("recved msg from %d\n",recv_pid);
+				LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " received: " << recv_buff << "from: " << recv_pid << "\n");
+				//printf("recved msg from %d\n",recv_pid);
 #endif
 			if(strcmp(data,"PHASE1_RESPONSE") == 0)	
 			{
@@ -280,14 +301,13 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 				//retrive components of accepted set str and update
 
 				i=0;pval_size=0;
-				while(accepted_set_str != NULL)
-				{
-					temp = strtok_r(accepted_set_str,DELIMITER_SEC,&tok1);
-					
-					if(!temp)
-						break;
-					else
-					{
+				temp = strtok_r(accepted_set_str,DELIMITER_SEC,&tok1);
+				while(temp != NULL)
+				{	
+#if DEBUG==1
+
+						//printf("!!!!scout id %d temp:%s\n",my_pid,temp);
+#endif
 
 						pvalues[i].ballot.bnum = atoi(temp);
 						temp =  strtok_r(NULL,DELIMITER_SEC,&tok1);
@@ -296,8 +316,7 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 						pvalues[i].slot_number =  atoi(temp);
 						temp =  strtok_r(NULL,DELIMITER_SEC,&tok1);
 						pvalues[i].command =  atoi(temp);
-						
-					}	
+						temp = strtok_r(NULL,DELIMITER_SEC,&tok1);				
 
 					i++;
 					pval_size++;
@@ -341,7 +360,9 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 				      			return NULL;
      						}
 #if DEBUG==1
-						printf("adopted successfully sent from scout %d\n",my_pid);
+
+						LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " adopted msg sent" << "\n");
+						//printf("adopted successfully sent from scout %d\n",my_pid);
 #endif	
 						//job complete
 						return NULL;	
@@ -360,12 +381,15 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 					if(send_preemption(TALKER_SCOUT,parent_id,send_buff,parent_addr,parent_addr_len))
 					{
 #if DEBUG==1
-						printf("preemption successfully sent from scout %d\n",my_pid);
+						LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " preemption msg sent" << "\n");
+						//printf("preemption successfully sent from scout %d\n",my_pid);
 #endif						
 					}
 					else
-						printf("preemption failed at scout %d",my_pid);	
-
+					{
+						LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " preemption msg sending failed" << "\n");
+						//printf("preemption failed at scout %d",my_pid);	
+					}
 					return NULL;
 
 				}

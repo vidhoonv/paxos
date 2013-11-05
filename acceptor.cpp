@@ -12,9 +12,8 @@
 #define ACCEPTED_STRING_PREP(STR,ACCEPTED_SET)  strcpy(STR,""); \
 						for(i=0;i<ACCEPTED_SET.current_length;i++) \
 						{ \
-							BALLOT_STRING_PREP(bstr,ACCEPTED_SET.ballot[i]); \
-							strcat(STR,bstr); \
-							strcat(STR,DELIMITER_SEC);  \
+							BALLOT_STRING_PREP(cstr,ACCEPTED_SET.ballot[i]); \
+							strcat(STR,cstr); \
 							sprintf(STR,"%s%d",STR,ACCEPTED_SET.slot_number[i]); \
 							strcat(STR,DELIMITER_SEC);  \
 							sprintf(STR,"%s%d",STR,ACCEPTED_SET.command[i]); \
@@ -22,10 +21,10 @@
 						} 
  	
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000};//,4002};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
-int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5002,5004,5006,5008,5010,5012,5014,5016,5018,5020,5022,5024,5026,5028,5030,5032,5034,5036,5038,5040,5042,5044,5046,5048,5050,5052,5054,5056,5058};
-int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6002,6004,6006,6008,6010,6012,6014,6016,6018,6020,6022,6024,6026,6028,6030,6032,6034,6036,6038,5040,5042,5044,5046,5048,5050,5052,5054,5056,5058};
+int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
+int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
 struct ACCEPTED_SET
 {
 	struct BALLOT_NUMBER ballot[MAX_SET_SIZE];
@@ -66,10 +65,16 @@ int ballot_compare(struct BALLOT_NUMBER other_ballot,struct BALLOT_NUMBER my_bal
 {
 	if(other_ballot.bnum-my_ballot.bnum == 0)
 	{
+#if DEBUG==1
+		printf("ballot compare returning %d\n",other_ballot.leader_id-my_ballot.leader_id);
+#endif	
 		return (other_ballot.leader_id-my_ballot.leader_id);	
 	}
 	else
 	{
+#if DEBUG==1
+		printf("ballot compare returning %d\n",other_ballot.bnum-my_ballot.bnum);
+#endif	
 		return(other_ballot.bnum-my_ballot.bnum); 
 	}
 }
@@ -176,7 +181,7 @@ int main(int argc,char **argv)
 	char *data;
 	char *ballot_str;
 	char buff_copy[BUFSIZE];
-	char bstr[BUFSIZE];
+	char bstr[BUFSIZE],cstr[BUFSIZE];
 	char accepted_str[BUFSIZE];
 
 //sender details of a received message
@@ -340,10 +345,21 @@ int main(int argc,char **argv)
 #if DEBUG==1
 				printf("recv ballot round: %d lid: %d\n",recv_ballot.bnum,recv_ballot.leader_id);
 #endif	
-				if(ballot_compare(recv_ballot,acc_state.ballot)) 
+				if(ballot_compare(recv_ballot,acc_state.ballot) > 0) 
 				{
 					//received ballot should be adopted
-					ballot_copy(recv_ballot,&acc_state.ballot); //to be defined
+					//ballot_copy(recv_ballot,&acc_state.ballot); //to be defined
+					acc_state.ballot.bnum = recv_ballot.bnum;
+					acc_state.ballot.leader_id = recv_ballot.leader_id;
+#if DEBUG==1
+					printf("ballot round: %d lid: %d accepted\n",acc_state.ballot.bnum,acc_state.ballot.leader_id);
+#endif	
+				}
+				else
+				{
+#if DEBUG==1
+				printf("recv ballot round: %d lid: %d not accepted\n",recv_ballot.bnum,recv_ballot.leader_id);
+#endif	
 				}
 				//else just skip the ballot
 
@@ -354,18 +370,23 @@ int main(int argc,char **argv)
 
 				//prepare ballot string
 				BALLOT_STRING_PREP(bstr,acc_state.ballot);
-				//prepare accepted string
-				ACCEPTED_STRING_PREP(accepted_str,acc_state.accepted);
+#if DEBUG==1
+				printf("phase 1 response bstr: %s ballot(%d,%d)\n",bstr,acc_state.ballot.bnum,acc_state.ballot.leader_id);
+#endif	
+				
 				strcpy(send_buff,"PHASE1_RESPONSE");
 				strcat(send_buff,DELIMITER);
 				sprintf(send_buff,"%s%d",send_buff,my_pid); //acceptor id
 				strcat(send_buff,DELIMITER);
 				strcat(send_buff,bstr);  //ballot
 				strcat(send_buff,DELIMITER);
-
+//prepare accepted string
+				ACCEPTED_STRING_PREP(accepted_str,acc_state.accepted);
 				strcat(send_buff,accepted_str); //accepted set
 				strcat(send_buff,DELIMITER);
-				
+#if DEBUG==1
+				printf("phase 1 response content: %s \n",send_buff);
+#endif					
 				respond(TALKER,scout_addr[recv_pid],send_buff);
 				
 			}

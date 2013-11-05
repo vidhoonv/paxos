@@ -1,17 +1,27 @@
+//logging
+#include <log4cxx/logger.h>
+#include <log4cxx/xml/domconfigurator.h>
+
 #include<stdio.h>
 #include <pthread.h>
 #include<algorithm>
 #include "pax_types.h"
 
+using namespace log4cxx;
+using namespace log4cxx::xml;
+using namespace log4cxx::helpers;
+
+// Define static logger variable
+LoggerPtr LeaderLogger(Logger::getLogger("leader"));
+
 #define MAX_SET_SIZE 100
 #define TALKER leader_comm.comm_fd[TALKER_INDEX]
 #define LISTENER leader_comm.comm_fd[LISTENER_INDEX]
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000};//,4002};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
-int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5002,5004,5006,5008,5010,5012,5014,5016,5018,5020,5022,5024,5026,5028,5030,5032,5034,5036,5038,5040,5042,5044,5046,5048,5050,5052,5054,5056,5058};
-int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6002,6004,6006,6008,6010,6012,6014,6016,6018,6020,6022,6024,6026,6028,6030,6032,6034,6036,6038,5040,5042,5044,5046,5048,5050,5052,5054,5056,5058};
-
+int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
+int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
 
 void* commander(void*);
 void* scout(void*);
@@ -22,14 +32,17 @@ void* scout(void*);
 					 temp = strtok_r(STR,DELIMITER_SEC,&tok1); \
 					while(temp) \
 					{ \
+						printf("here %s\n",temp);\
 						/*BALLOT NUMBER (temp1,temp2)*/ \
 						recv_ballot.bnum = atoi(temp); \
 						recv_ballot.leader_id = atoi(strtok_r(NULL,DELIMITER_SEC,&tok1)); \
 						/*slot number */ \
 						slot_number = atoi(strtok_r(NULL,DELIMITER_SEC,&tok1)); \
-						if(ballot_compare(recv_ballot,acc_pvals_hballot[slot_number])) \
+						command = atoi(strtok_r(NULL,DELIMITER_SEC,&tok1)); \
+						if(ballot_compare(recv_ballot,acc_pvals_hballot[slot_number]) > 0) \
 						{ \
-							ACC_MAP1[slot_number] = atoi(strtok_r(NULL,DELIMITER_SEC,&tok1)); \
+							printf("in ballot compare \n");\
+							ACC_MAP1[slot_number] = command; \
 							ACC_MAP2[slot_number] = recv_ballot; \
 						} \
 						temp = strtok_r(NULL,DELIMITER_SEC,&tok1); \
@@ -164,11 +177,11 @@ int main(int argc,char **argv)
 	struct BALLOT_NUMBER recv_ballot,temp_ballot;
 
 //threads
-	pthread_t commander_thread[MAX_COMMANDERS],scout_thread[MAX_SCOUTS];
+	pthread_t commander_thread[MAX_COMMANDERS_PER_LEADER],scout_thread[MAX_SCOUTS_PER_LEADER];
 	int rc=0;
-	struct COMMANDER_THREAD_ARG comm_create_args[MAX_COMMANDERS];
+	struct COMMANDER_THREAD_ARG comm_create_args[MAX_COMMANDERS_PER_LEADER];
 	int count_commanders=0, count_scouts=0;
-	struct SCOUT_THREAD_ARG scout_create_args[MAX_SCOUTS];
+	struct SCOUT_THREAD_ARG scout_create_args[MAX_SCOUTS_PER_LEADER];
 
 //pval set from acceptors
 	struct BALLOT_NUMBER acc_pvals_hballot[MAX_SLOTS]; //// this contains acc_pvals_hballot[slot_number]= current highest ballot
@@ -182,7 +195,8 @@ int main(int argc,char **argv)
 		return -1;
 	}
 	my_pid=atoi(argv[1]);
-
+//configure logger
+ DOMConfigurator::configure("leader_log_config.xml");
 	//initialization
 	//leader_state.plist.current_length = 0;
 	leader_state.ballot.bnum = 0;
@@ -197,27 +211,31 @@ int main(int argc,char **argv)
 	hp = gethostbyname(hostname);
 	if (hp == NULL) 
 	{ 
-		printf("\n%s: unknown host.\n", hostname); 
+		LOG4CXX_TRACE(LeaderLogger,hostname << " : unknown host\n");
+		//printf("\n%s: unknown host.\n", hostname); 
 		return 0; 
 	} 
 	//configure leader talker and listener ports	
 	//setup the leader 
 	if(configure_leader(my_pid,&leader_comm))
 	{
-		printf("Leader id: %d configured successfully\n",my_pid);
+		LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " configured successfully\n");
+		//printf("Leader id: %d configured successfully\n",my_pid);
 	}
 	else
 	{
-		printf("Error in config of leader id: %d\n",my_pid);
+		LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " config error \n");
+		//printf("Error in config of leader id: %d\n",my_pid);
 		return -1;
 	}
 	
 #if DEBUG==1
-	printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
+	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");
+	//printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
 #endif
 	//create a new scout thread
 	scout_create_args[count_scouts].parent_id = my_pid;
-	scout_create_args[count_scouts].my_pid = count_scouts;
+	scout_create_args[count_scouts].my_pid = count_scouts+my_pid*MAX_SCOUTS_PER_LEADER;
 	scout_create_args[count_scouts].my_ballot = leader_state.ballot; 
 	rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 	count_scouts++;
@@ -233,7 +251,8 @@ int main(int argc,char **argv)
 
 		if(ret <0)
 	   	{ 
-	     		printf("\nLeader id: %d Select error\n",my_pid);   
+			LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " select error\n");
+	     		//printf("\nLeader id: %d Select error\n",my_pid);   
 	     		return -1;
 	   	} 
 
@@ -250,7 +269,7 @@ int main(int argc,char **argv)
             			return -1;
         		}		
 			recv_buff[nread] = 0;
-  			printf("Leader id: %d received: %s\n",my_pid, recv_buff);
+  			//printf("Leader id: %d received: %s\n",my_pid, recv_buff);
 
 			strcpy(buff_copy,recv_buff);			
 			data = strtok_r(buff_copy,DELIMITER,&tok);
@@ -258,7 +277,8 @@ int main(int argc,char **argv)
 //retrive recv_pid
 				recv_pid = atoi(strtok_r(NULL,DELIMITER,&tok));
 #if DEBUG==1
-				printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << "from: " << recv_pid << "\n");
+				//printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
 #endif		
 			if(strcmp(data,"PROPOSE") == 0)
 			{
@@ -276,7 +296,8 @@ int main(int argc,char **argv)
 				{
 					//new proposal
 #if DEBUG==1
-					printf("Leader id: %d no previous proposal for slot number -- added to plist!\n",my_pid);
+					LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "no previous proposal for slot number -- added to plist!\n");
+					//printf("Leader id: %d no previous proposal for slot number -- added to plist!\n",my_pid);
 #endif
 
 					//add new proposal to plist
@@ -285,17 +306,19 @@ int main(int argc,char **argv)
 					if(leader_state.lstatus == LEADER_ACTIVE)
 					{
 #if DEBUG==1
-						printf("Leader id: %d  is active now - creating commander thread %d!\n",my_pid,count_commanders);
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "is active now - creating commander thread" << count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER << "\n");
+						//printf("Leader id: %d  is active now - creating commander thread %d!\n",my_pid,count_commanders);
 #endif
 						//create a new commander thread
 						comm_create_args[count_commanders].parent_id = my_pid;
-						comm_create_args[count_commanders].my_pid = count_commanders;
+						comm_create_args[count_commanders].my_pid = count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER;
 						comm_create_args[count_commanders].my_pval.ballot = leader_state.ballot; 
 						comm_create_args[count_commanders].my_pval.slot_number = slot_number;
 						comm_create_args[count_commanders].my_pval.command = command;
 						rc = pthread_create(&commander_thread[count_commanders], NULL, commander, (void *)&comm_create_args[count_commanders]);
 #if DEBUG==1
-						printf("Leader id: %d created commander thread %d!\n",my_pid,count_commanders);
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "created commander thread" << count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER << "\n");
+						//printf("Leader id: %d created commander thread %d!\n",my_pid,count_commanders);
 #endif
 						count_commanders++;
 
@@ -306,7 +329,8 @@ int main(int argc,char **argv)
 				{
 					//old proposal
 #if DEBUG==1
-					printf("Leader id: %d already proposed for this slot number!\n",my_pid);
+					LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "already proposed for this slot number\n");
+					//printf("Leader id: %d already proposed for this slot number!\n",my_pid);
 #endif
 				}
 
@@ -340,11 +364,12 @@ int main(int argc,char **argv)
 						if(leader_state.plist.command[i] == -1)
 							continue;
 #if DEBUG==1
-						printf("Leader id: %d creating commander thread for proposal <(%d,%d):%d:%d>!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id,i,leader_state.plist.command[i]);
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " creating commander thread "  <<count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER << " for proposal <(" << leader_state.ballot.bnum <<","<< leader_state.ballot.leader_id << "):" << i << ":"<< leader_state.plist.command[i] <<  ">!\n");
+						//printf("Leader id: %d creating commander thread for proposal <(%d,%d):%d:%d>!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id,i,leader_state.plist.command[i]);
 #endif
 						//create a new commander thread
 						comm_create_args[count_commanders].parent_id = my_pid;
-						comm_create_args[count_commanders].my_pid = count_commanders;
+						comm_create_args[count_commanders].my_pid = count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER;
 						comm_create_args[count_commanders].my_pval.ballot = leader_state.ballot; 
 						comm_create_args[count_commanders].my_pval.slot_number = i;
 						comm_create_args[count_commanders].my_pval.command = leader_state.plist.command[i];
@@ -357,7 +382,8 @@ int main(int argc,char **argv)
 				}
 				else
 				{
-					printf("Leader id: %d received ballot (%d:%d) which must be old - ignoring\n",my_pid,recv_ballot.bnum,recv_ballot.leader_id);
+					LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "received ballot ("<< recv_ballot.bnum << ":" << recv_ballot.leader_id << ")\n");
+					//printf("Leader id: %d received ballot (%d:%d) which must be old - ignoring\n",my_pid,recv_ballot.bnum,recv_ballot.leader_id);
 
 				}	
 			}
@@ -373,18 +399,19 @@ int main(int argc,char **argv)
 				recv_ballot.bnum = atoi(strtok_r(ballot_str,DELIMITER_SEC,&tok1));
 				recv_ballot.leader_id = atoi(strtok_r(NULL,DELIMITER_SEC,&tok1));
 
-				if(ballot_compare(recv_ballot,leader_state.ballot))
+				if(ballot_compare(recv_ballot,leader_state.ballot) > 0)
 				{
 					leader_state.lstatus = LEADER_INACTIVE;
 					leader_state.ballot.bnum = recv_ballot.bnum + 1;
 
 					//create a new scout thread for the new ballot 					
 #if DEBUG==1
-						printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread " << count_scouts+my_pid*MAX_SCOUTS_PER_LEADER <<" for ballot ("<< leader_state.ballot.bnum << ":" << leader_state.ballot.leader_id << ")\n");
+						//printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
 #endif
 						//create a new scout thread
 						scout_create_args[count_scouts].parent_id = my_pid;
-						scout_create_args[count_scouts].my_pid = count_scouts;
+						scout_create_args[count_scouts].my_pid = count_scouts+my_pid*MAX_SCOUTS_PER_LEADER;
 						scout_create_args[count_scouts].my_ballot = leader_state.ballot; 
 						rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 						count_scouts++;
@@ -392,7 +419,8 @@ int main(int argc,char **argv)
 			}
 			else
 			{
-				printf("undefined msg received at leader id: %d msg:%s\n",my_pid,data);
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " undefined msg received"  << data << "\n");
+				//printf("undefined msg received at leader id: %d msg:%s\n",my_pid,data);
 			}
 		}
 	}	
