@@ -53,6 +53,7 @@ void* scout(void*);
 #define MANIPULATE_LEADER_PLIST(ACC_CMD_MAP,PROP_LIST) \
 					for(i=0;i<MAX_SLOTS;i++) \
 					{ \
+						if(ACC_CMD_MAP[i] != -1) \
 						PROP_LIST.command[i] = ACC_CMD_MAP[i]; \
 					} 
 
@@ -361,8 +362,11 @@ int main(int argc,char **argv)
 					//create commander thread for each pending proposal with leader
 					for(i=0;i<MAX_SLOTS;i++)
 					{
+	
 						if(leader_state.plist.command[i] == -1)
 							continue;
+
+printf("!!!!here\n");
 #if DEBUG==1
 						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " creating commander thread "  <<count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER << " for proposal <(" << leader_state.ballot.bnum <<","<< leader_state.ballot.leader_id << "):" << i << ":"<< leader_state.plist.command[i] <<  ">!\n");
 						//printf("Leader id: %d creating commander thread for proposal <(%d,%d):%d:%d>!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id,i,leader_state.plist.command[i]);
