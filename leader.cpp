@@ -17,6 +17,10 @@ LoggerPtr LeaderLogger(Logger::getLogger("leader"));
 #define MAX_SET_SIZE 100
 #define TALKER leader_comm.comm_fd[TALKER_INDEX]
 #define LISTENER leader_comm.comm_fd[LISTENER_INDEX]
+
+#define INCREASE_INDEX 0
+#define DECREASE_INDEX 1
+
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
 int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
@@ -67,6 +71,8 @@ struct STATE_LEADER
 	struct BALLOT_NUMBER ballot;
 	enum LEADER_STATUS lstatus;
 	struct PROPOSAL plist;
+	unsigned int preemption_timeout; //microseconds
+	float timeout_factor[2]; //0 - increase by factor; 1 - decrease by factor
 };
 
 int ballot_compare(struct BALLOT_NUMBER other_ballot,struct BALLOT_NUMBER my_ballot)
@@ -207,6 +213,11 @@ int main(int argc,char **argv)
 	std::fill(acc_pvals_command, acc_pvals_command + MAX_SLOTS, -1);
 	std::fill(leader_state.plist.command,leader_state.plist.command+MAX_SLOTS,-1);
 
+	leader_state.preemption_timeout = 2000000;
+	leader_state.timeout_factor[INCREASE_INDEX] = 1.5;
+	leader_state.timeout_factor[DECREASE_INDEX] = 1000000;
+
+	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "timeout factors " << leader_state.timeout_factor[INCREASE_INDEX] << "," << leader_state.timeout_factor[DECREASE_INDEX]<<"\n");
 	//hostname configuration
 	gethostname(hostname, sizeof(hostname));
 	hp = gethostbyname(hostname);
@@ -383,6 +394,11 @@ printf("!!!!here\n");
 					}
 					//change status to active
 					leader_state.lstatus = LEADER_ACTIVE;
+					//DECREASE TIMEOUT
+					leader_state.preemption_timeout = leader_state.preemption_timeout-leader_state.timeout_factor[DECREASE_INDEX];
+#if DEBUG==1
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " decreased timeout " << leader_state.preemption_timeout << "\n");
+#endif
 				}
 				else
 				{
@@ -405,7 +421,23 @@ printf("!!!!here\n");
 
 				if(ballot_compare(recv_ballot,leader_state.ballot) > 0)
 				{
+					
 					leader_state.lstatus = LEADER_INACTIVE;
+#if DEBUG==1
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " increased timeout " << leader_state.preemption_timeout*leader_state.timeout_factor[INCREASE_INDEX] << " factor:" << leader_state.timeout_factor[INCREASE_INDEX] << "\n");
+#endif	
+					//INCREASE TIMEOUT
+					leader_state.preemption_timeout = leader_state.preemption_timeout*leader_state.timeout_factor[INCREASE_INDEX];
+
+					if(leader_state.preemption_timeout > 0)
+					{
+						if(usleep(leader_state.preemption_timeout) == 0)
+						{
+#if DEBUG==1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "timeout over: " << leader_state.preemption_timeout << "\n");
+#endif	
+						}
+					}
 					leader_state.ballot.bnum = recv_ballot.bnum + 1;
 
 					//create a new scout thread for the new ballot 					
