@@ -4,15 +4,18 @@
 
 /* this is a stub client to test message passsing and basic paxos */
 
+
 #define TALKER client_comm.comm_fd[TALKER_INDEX]
 #define LISTENER client_comm.comm_fd[LISTENER_INDEX]
+
+#define COMMAND_COUNT 5
 
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
 int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
-int CLIENT_PORT_LIST[MAX_CLIENTS] = {7000};
+int CLIENT_PORT_LIST[MAX_CLIENTS] = {7000,7001};
 
 
 struct COMM_DATA client_comm;
@@ -96,11 +99,14 @@ void* listener(void *arg)
 	char buff_copy[BUFSIZE];
 	char *data;
 
+	struct COMM_DATA *client_comm = (struct COMM_DATA *)arg;
+
+	printf("listener thread created\n");
 	while(1)
 	{
-		maxfd = LISTENER+1;
+		maxfd = client_comm->comm_fd[LISTENER_INDEX]+1;
 		FD_ZERO(&readfds); 
-		FD_SET(LISTENER, &readfds);
+		FD_SET(client_comm->comm_fd[LISTENER_INDEX], &readfds);
 
 		ret = select(maxfd, &readfds, NULL, NULL, NULL);  //blocks forever till it receives a message
 
@@ -111,16 +117,16 @@ void* listener(void *arg)
 	     		return NULL;
 	   	} 
 
-		if(FD_ISSET (LISTENER, &readfds))
+		if(FD_ISSET (client_comm->comm_fd[LISTENER_INDEX], &readfds))
 		{
 			temp_paddr_len = sizeof(temp_paddr);
-			nread = recvfrom (LISTENER, recv_buff, BUFSIZE, 0, 
+			nread = recvfrom (client_comm->comm_fd[LISTENER_INDEX], recv_buff, BUFSIZE, 0, 
                	       			(struct sockaddr *)&temp_paddr, &temp_paddr_len); 
 		
 		 	if (nread < 0)
 		       	{
 		        	perror("recvfrom ");
-            			close(LISTENER);
+            			close(client_comm->comm_fd[LISTENER_INDEX]);
             			return NULL;
         		}		
 			recv_buff[nread] = 0;
@@ -137,49 +143,40 @@ void* listener(void *arg)
 		}
 	}
 }
-int main(int argc, char **argv)
+
+void* client(void *thread_data)
 {
-//command sequences for testing
-	int command_seq1[3] = {3,2,1};
-	int command_seq2[3] = {2,1,3};
 
-	//int command_seq1[5] = {3,2,1,5,4};
-	//int command_seq2[5] = {2,1,4,3,5};
-
-//int command_seq1[15] = {8,3,7,5,9,2,4,1,6,10,13,15,11,14,12};
-//int command_seq2[15] = {6,1,3,8,9,5,7,4,2,15,12,11,13,10,14};
-
-
-	
-	
-	int my_pid;
+	struct COMM_DATA client_comm;
+	struct CLIENT_THREAD_ARG *args;
+	int my_pid,i,j,ret,cmd_counter=0;
 	pthread_t listener_thread;
-
-
-
+	
 //comm related variables
 	struct hostent *hp;
 	char hostname[64];
-
 	
-
-
 //comm sending variables
 	char send_buff[BUFSIZE];
+	char cmd_str[BUFSIZE];
 	struct sockaddr_in *replica_addr_in[MAX_REPLICAS],*process_addr_in;
 	struct sockaddr replica_addr[MAX_REPLICAS],process_addr;
 	socklen_t replica_addr_len[MAX_REPLICAS],process_addr_len;
 
-	int i,j,ret =0;
+//command sequences for testing
+	//int command_seq1[COMMAND_COUNT] = {1,2,3};
+	//int command_seq2[COMMAND_COUNT] = {4,5,6};
 
+	int command_seq1[COMMAND_COUNT] = {1,2,3,4,5};
+	int command_seq2[COMMAND_COUNT] = {6,7,8,9,10};
 
-//check runtime arguments
-	if(argc!=2)
-	{
-		printf("Usage: ./client <client_id>\n");
-		return -1;
-	}
-	my_pid=atoi(argv[1]);
+//int command_seq1[COMMAND_COUNT] = {8,3,7,5,9,2,4,1,6,10,13,15,11,14,12};
+//int command_seq2[COMMAND_COUNT] = {6,1,3,8,9,5,7,4,2,15,12,11,13,10,14};
+
+//configure thread data
+	args = (struct CLIENT_THREAD_ARG*)thread_data;
+	my_pid = args->my_pid;
+	printf("new client created %d\n",my_pid);
 
 	//hostname configuration
 	gethostname(hostname, sizeof(hostname));
@@ -189,9 +186,9 @@ int main(int argc, char **argv)
 		printf("\n%s: unknown host.\n", hostname); 
 		return 0; 
 	} 
+	
 
 //setup replica addresses
-
 	for(i=0;i<MAX_REPLICAS;i++)
 	{
 		replica_addr_in[i] = (struct sockaddr_in *)&(replica_addr[i]);
@@ -200,7 +197,6 @@ int main(int argc, char **argv)
 		replica_addr_in[i]->sin_port  = htons(REPLICA_PORT_LIST[i]);  
 		replica_addr_len[i] = sizeof(replica_addr[i]);
 	}
-
 
 	//configure client talker and listener ports	
 	//setup the client
@@ -211,25 +207,34 @@ int main(int argc, char **argv)
 	else
 	{
 		printf("Error in config of client id: %d\n",my_pid);
-		return -1;
 	}
 
 //create listener thread
-
-pthread_create(&listener_thread,NULL,listener,NULL);	
+pthread_create(&listener_thread,NULL,listener,(void *)&client_comm);	
 
 
 //send commands to replicas in different order for testing
 for(j=0;j<MAX_REPLICAS;j++)
 {
-	for(i=0;i<3;i++)
+	for(i=0;i<COMMAND_COUNT;i++)
 	{
+		
+	//send PHASE1_RESPONSE 
+	//sending data in the format
+	//REQUEST:<CLIENT_ID>:<CMD_STRING>:
 	
-		strcpy(send_buff,"REQUEST:0:");
-		if(j==0)
+		strcpy(send_buff,"REQUEST");
+		strcat(send_buff,DELIMITER);
+		sprintf(send_buff,"%s%d",send_buff,my_pid);
+		strcat(send_buff,DELIMITER);
+
+		if(my_pid == 0)
 			sprintf(send_buff,"%s%d:",send_buff,command_seq1[i]);
-		else if(j==1)
+		else if(my_pid == 1)
 			sprintf(send_buff,"%s%d:",send_buff,command_seq2[i]);
+			
+		strcat(send_buff,DELIMITER);
+		
 		ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
       			(struct sockaddr *)&replica_addr[j], replica_addr_len[j]);
 			
@@ -241,5 +246,34 @@ for(j=0;j<MAX_REPLICAS;j++)
 	}
 }
 pthread_join(listener_thread,NULL);
+}
+
+
+int main(int argc, char **argv)
+{
+	int client_count=0;
+	int i=0,rc=0;
+	
+
+//check runtime arguments
+	if(argc!=2)
+	{
+		printf("Usage: ./client <num_of_clients>\n");
+		return -1;
+	}
+	client_count=atoi(argv[1]);
+
+	pthread_t client_thread[client_count];
+	struct CLIENT_THREAD_ARG client_create_args[client_count];
+	
+	for(i=0;i<client_count;i++)
+	{
+		printf("\ncreating client %d\n",i);
+		client_create_args[i].my_pid = i;
+		rc = pthread_create(&client_thread[i], NULL, client, (void *)&client_create_args[i]);
+	}
+
+printf("end of main\n");
+pthread_join(client_thread[i-1],NULL);
 return 0;
 }

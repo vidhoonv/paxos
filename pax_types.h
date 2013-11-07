@@ -19,7 +19,7 @@
 #define DELIMITER ":"
 #define DELIMITER_SEC ";"
 
-#define MAX_CLIENTS 1
+#define MAX_CLIENTS 2
 #define MAX_ACCEPTORS 3
 #define MAX_LEADERS 2
 #define MAX_REPLICAS 2
@@ -81,5 +81,9 @@ struct SCOUT_THREAD_ARG
 	int parent_id;
 	int my_pid;	
 	struct BALLOT_NUMBER my_ballot;
+};
+struct CLIENT_THREAD_ARG
+{
+	int my_pid;
 };
 #endif
