@@ -15,11 +15,12 @@
 #include <sys/time.h>
 
 #define DEBUG 1
+#define USERINPUT 0
 
 #define DELIMITER ":"
 #define DELIMITER_SEC ";"
 #define DELIMITER_CMD "-"
-#define MAX_CLIENTS 3
+#define MAX_CLIENTS 2
 #define MAX_ACCEPTORS 3
 #define MAX_LEADERS 2
 #define MAX_REPLICAS 2
@@ -45,6 +46,8 @@
 
 #define MAX_SET_SIZE 100
 #define MAX_SLOTS 100
+#define MAX_ACC_NAME_LENGTH 200
+#define MAX_COMMANDS 100
 
 enum COMMAND_TYPE
 {

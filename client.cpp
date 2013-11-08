@@ -11,18 +11,14 @@
 #define TALKER client_comm.comm_fd[TALKER_INDEX]
 #define LISTENER client_comm.comm_fd[LISTENER_INDEX]
 
-#define COMMAND_COUNT 7
-#define DELAY_LOWER_LIMIT 0
-#define DELAY_UPPER_LIMIT 50
+#define COMMAND_COUNT 5
+
 
 #define CMD_DATA_PREP(OP1,OP2,STR) strcpy(STR,"");	\
 					strcat(STR,OP1);	\
 					strcat(STR,DELIMITER_CMD);	\
 					strcat(STR,OP2);	\
 					strcat(STR,DELIMITER_CMD);						
-//random delay generation - initialization
-typedef std::mt19937 rng_type;
-std::uniform_int_distribution<rng_type::result_type> udist(DELAY_LOWER_LIMIT, DELAY_UPPER_LIMIT);
 
 
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
@@ -30,7 +26,7 @@ int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
-int CLIENT_PORT_LIST[MAX_CLIENTS] = {7000,7001,7002};
+int CLIENT_PORT_LIST[MAX_CLIENTS] = {7000,7001};//,7002};
 
 
 struct COMM_DATA client_comm;
@@ -182,41 +178,21 @@ void* client(void *thread_data)
 	struct sockaddr replica_addr[MAX_REPLICAS],process_addr;
 	socklen_t replica_addr_len[MAX_REPLICAS],process_addr_len;
 
-//random number generation related
-	 rng_type rng;
-         int rnd=0;
 //command struct
 	struct COMMAND_ITEM user_cmd[MAX_SLOTS];
 	int command_counter=0;
 //inputs
 	char acc_name[BUFSIZE/2];
 	char op_arg[BUFSIZE/2];
+	int cmd_type=-1;
+	struct COMMAND_ITEM cmd;
 
-//command sequences for testing
-	//int command_seq1[COMMAND_COUNT] = {1,2,3};
-	//int command_seq2[COMMAND_COUNT] = {4,5,6};
-
-	int command_seq1[COMMAND_COUNT] = {1,2,3};
-	int command_seq2[COMMAND_COUNT] = {4,5,6};
-
-	//int command_seq1[COMMAND_COUNT] = {1,2,3,4,5};
-	//int command_seq2[COMMAND_COUNT] = {6,7,8,9,10};
-	//int command_seq3[COMMAND_COUNT] = {11,12,13,14,15};
-	//int command_seq4[COMMAND_COUNT] = {16,17,18,19,20};
-
-	
-//int command_seq1[COMMAND_COUNT] = {8,3,7,5,9,2,4,1,6,10,13,15,11,14,12};
-//int command_seq2[COMMAND_COUNT] = {6,1,3,8,9,5,7,4,2,15,12,11,13,10,14};
 
 //configure thread data
 	args = (struct CLIENT_THREAD_ARG*)thread_data;
 	my_pid = args->my_pid;
-	//seeder = args->seeder;
-	printf("new client created %d\n",my_pid);
 
-//configure random number generator seed
-	// rng_type::result_type const seedval = seeder;
-	// rng.seed(seedval);
+	printf("new client created %d\n",my_pid);
 
 
 	 //hostname configuration
@@ -230,25 +206,6 @@ void* client(void *thread_data)
 	
 
 
-//tentative create commands
-
-	if(my_pid == 0)
-	{
-		strcpy(acc_name,"Ajay");
-		strcpy(op_arg,"1000");
-	}	
-	else if(my_pid == 1)
-	{
-		strcpy(acc_name,"Surya");
-		strcpy(op_arg,"5000");
-	}	
-	for(i=0;i<COMMAND_COUNT;i++)
-	{
-		user_cmd[i].command_id = GET_NEXT_CMD_ID;
-		user_cmd[i].command_type = COMMAND_DEPOSIT; //hard coded for testing
-		CMD_DATA_PREP(acc_name,op_arg,user_cmd[i].command_data);
-		command_counter++;
-	}
 //setup replica addresses
 	for(i=0;i<MAX_REPLICAS;i++)
 	{
@@ -273,97 +230,165 @@ void* client(void *thread_data)
 //create listener thread
 pthread_create(&listener_thread,NULL,listener,(void *)&client_comm);	
 
-for(i=0;i<COMMAND_COUNT;i++)
-{
-	for(j=0;j<MAX_REPLICAS;j++)
-	{
-		
-	//send PHASE1_RESPONSE 
-	//sending data in the format
-	//REQUEST:<CLIENT_ID>:<CMD_STRING>:
-	
-		if(my_pid%2 != 0 && j<MAX_REPLICAS/2 && my_pid%2 == 1 && j>=MAX_REPLICAS/2)
-		{
-			strcpy(send_buff,"REQUEST");
-			strcat(send_buff,DELIMITER);
-			sprintf(send_buff,"%s%d",send_buff,my_pid);
-			strcat(send_buff,DELIMITER);
+/*input part
 
-			sprintf(cmd_str,"%s%d",cmd_str,user_cmd[i].command_id);
-			strcat(cmd_str,DELIMITER_SEC);
-			sprintf(cmd_str,"%s%d",cmd_str,user_cmd[i].command_type);
-			strcat(cmd_str,DELIMITER_SEC);
-			strcat(cmd_str,user_cmd[i].command_data);
-			strcat(cmd_str,DELIMITER_SEC);
-			strcat(send_buff,cmd_str);
-			strcat(send_buff,DELIMITER);
-			strcpy(cmd_str,"");
-			
-			printf("Client %d: Sending commmand %d to replica %d \n",my_pid,i,j);
-			ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
-	      			(struct sockaddr *)&replica_addr[j], replica_addr_len[j]);
+
+
+*/
+#if USERINPUT == 1
+while(1)
+{
+
+	printf("Enter account name:\n");
+	scanf("%s",acc_name);
+
+	printf("Enter command type:\n");
+	scanf("%d",&cmd_type);
+	
+	printf("Enter amount:\n");
+	scanf("%s",op_arg);
+#else
+//tentative create commands
+
+	if(my_pid == 0)
+	{
+		strcpy(acc_name,"Ajay");
+		strcpy(op_arg,"1000");
+	}	
+	else if(my_pid == 1)
+	{
+		strcpy(acc_name,"Surya");
+		strcpy(op_arg,"5000");
+	}	
+	for(i=0;i<COMMAND_COUNT;i++)
+	{
+		user_cmd[i].command_id = GET_NEXT_CMD_ID;
+		user_cmd[i].command_type = COMMAND_DEPOSIT; //hard coded for testing
+		CMD_DATA_PREP(acc_name,op_arg,user_cmd[i].command_data);
+		command_counter++;
+	}
+
+
+	for(i=0;i<COMMAND_COUNT;i++)
+	{
+#endif
+		for(j=0;j<MAX_REPLICAS;j++)
+		{
+		//send CMD REQUEST
+		//sending data in the format
+		//REQUEST:<CLIENT_ID>:<CMD_STRING>:
+
+#if USERINPUT == 1
+		CMD_DATA_PREP(acc_name,op_arg,cmd.command_data);
+		cmd.command_id = GET_NEXT_CMD_ID;
+		cmd.command_type = (enum COMMAND_TYPE) cmd_type;
+		command_counter++;	
+#else	
+		cmd.command_id = user_cmd[i].command_id;
+		cmd.command_type = user_cmd[i].command_type;
+		strcpy(cmd.command_data,user_cmd[i].command_data);
+#endif
+	
+			if(my_pid%2 == 0 && j<MAX_REPLICAS/2 || my_pid%2 == 1 && j>=MAX_REPLICAS/2)
+			{
+				strcpy(send_buff,"REQUEST");
+				strcat(send_buff,DELIMITER);
+				sprintf(send_buff,"%s%d",send_buff,my_pid);
+				strcat(send_buff,DELIMITER);
+	
+				sprintf(cmd_str,"%s%d",cmd_str,cmd.command_id);
+				strcat(cmd_str,DELIMITER_SEC);
+				sprintf(cmd_str,"%s%d",cmd_str,cmd.command_type);
+				strcat(cmd_str,DELIMITER_SEC);
+				strcat(cmd_str,cmd.command_data);
+				strcat(cmd_str,DELIMITER_SEC);
+				strcat(send_buff,cmd_str);
+				strcat(send_buff,DELIMITER);
+				strcpy(cmd_str,"");
 				
-			if (ret < 0)
-	     		{
-	      			perror("sendto ");
-			        close(TALKER);
-	     		}
+				printf("Client %d: Sending commmand %d to replica %d \n",my_pid,cmd.command_id,j);
+				ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+		      			(struct sockaddr *)&replica_addr[j], replica_addr_len[j]);
+					
+				if (ret < 0)
+		     		{
+		      			perror("sendto ");
+				        close(TALKER);
+		     		}
+			}
+			
 		}
-		
+#if USERINPUT != 1
 	}
-}
-/*introducing asynchrony for some clients with respect to some replicas */
-for(i=0;i<COMMAND_COUNT;i++)
-{
-	for(j=0;j<MAX_REPLICAS;j++)
+#endif
+	/*introducing asynchrony for some clients with respect to some replicas */
+
+#if USERINPUT != 1
+	for(i=0;i<COMMAND_COUNT;i++)
 	{
-		
-	//send PHASE1_RESPONSE 
-	//sending data in the format
-	//REQUEST:<CLIENT_ID>:<CMD_STRING>:
-	
-		if(my_pid%2 == 0 && j<MAX_REPLICAS/2 || my_pid%2 == 1 && j>=MAX_REPLICAS/2)
+#endif
+		for(j=0;j<MAX_REPLICAS;j++)
 		{
-			//rng_type::result_type random_number = udist(rng);
-			//rnd = (int) random_number;
-			printf("Client %d: Waiting for commmand %d to replica %d for %d seconds\n",my_pid,i,j,rnd);
-			usleep(50000);	
-
-	
-			strcpy(send_buff,"REQUEST");
-			strcat(send_buff,DELIMITER);
-			sprintf(send_buff,"%s%d",send_buff,my_pid);
-			strcat(send_buff,DELIMITER);
-			sprintf(cmd_str,"%s%d",cmd_str,user_cmd[i].command_id);
-			strcat(cmd_str,DELIMITER_SEC);
-			sprintf(cmd_str,"%s%d",cmd_str,user_cmd[i].command_type);
-			strcat(cmd_str,DELIMITER_SEC);
-			strcat(cmd_str,user_cmd[i].command_data);
-			strcat(cmd_str,DELIMITER_SEC);
-			strcat(send_buff,cmd_str);
-			strcat(send_buff,DELIMITER);
-			strcpy(cmd_str,"");
 			
-			printf("Client %d: Sending commmand %d to replica %d \n",my_pid,i,j);
-			ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
-	      			(struct sockaddr *)&replica_addr[j], replica_addr_len[j]);
+		//send CMD REQUEST
+		//sending data in the format
+		//REQUEST:<CLIENT_ID>:<CMD_STRING>:
+
+#if USERINPUT == 1
+		CMD_DATA_PREP(acc_name,op_arg,cmd.command_data);
+		cmd.command_id = GET_NEXT_CMD_ID;
+		cmd.command_type = (enum COMMAND_TYPE) cmd_type;
+		command_counter++;	
+#else	
+		cmd.command_id = user_cmd[i].command_id;
+		cmd.command_type = user_cmd[i].command_type;
+		strcpy(cmd.command_data,user_cmd[i].command_data);
+#endif
+		
+			if(my_pid%2 == 0 && j<MAX_REPLICAS/2 || my_pid%2 == 1 && j>=MAX_REPLICAS/2)
+			{
+				printf("Client %d: Waiting for commmand %d to replica %d for 0.5 seconds\n",my_pid,i,j);
+				usleep(50000);	
+	
+		
+				strcpy(send_buff,"REQUEST");
+				strcat(send_buff,DELIMITER);
+				sprintf(send_buff,"%s%d",send_buff,my_pid);
+				strcat(send_buff,DELIMITER);
+				sprintf(cmd_str,"%s%d",cmd_str,cmd.command_id);
+				strcat(cmd_str,DELIMITER_SEC);
+				sprintf(cmd_str,"%s%d",cmd_str,cmd.command_type);
+				strcat(cmd_str,DELIMITER_SEC);
+				strcat(cmd_str,cmd.command_data);
+				strcat(cmd_str,DELIMITER_SEC);
+				strcat(send_buff,cmd_str);
+				strcat(send_buff,DELIMITER);
+				strcpy(cmd_str,"");
 				
-			if (ret < 0)
-	     		{
-	      			perror("sendto ");
-			        close(TALKER);
-	     		}
-
-		}		
-	}
+				printf("Client %d: Sending commmand %d to replica %d \n",my_pid,i,j);
+				ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+		      			(struct sockaddr *)&replica_addr[j], replica_addr_len[j]);
+					
+				if (ret < 0)
+		     		{
+		      			perror("sendto ");
+				        close(TALKER);
+		     		}
+	
+			}		
+		}
+#if USERINPUT != 1
+	} //for loop COMMAND_COUNT 
+#endif
+	 
+#if USERINPUT == 1
+} //while loop
+#endif	
+	
+	pthread_join(listener_thread,NULL);
 }
- 
-
-
-pthread_join(listener_thread,NULL);
-}
-
-
+	
+	
 int main(int argc, char **argv)
 {
 	int client_count=0;
