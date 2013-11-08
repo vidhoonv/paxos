@@ -18,8 +18,8 @@
 
 #define DELIMITER ":"
 #define DELIMITER_SEC ";"
-
-#define MAX_CLIENTS 2
+#define DELIMITER_CMD "-"
+#define MAX_CLIENTS 3
 #define MAX_ACCEPTORS 3
 #define MAX_LEADERS 2
 #define MAX_REPLICAS 2
@@ -41,10 +41,28 @@
 					sprintf(STR,"%s%d",STR,BALLOT.leader_id); \
 					strcat(STR,DELIMITER_SEC);
 
+#define GET_NEXT_CMD_ID command_counter*MAX_CLIENTS+my_pid 
+
 #define MAX_SET_SIZE 100
 #define MAX_SLOTS 100
 
-
+enum COMMAND_TYPE
+{
+	COMMAND_DEPOSIT=0,
+	COMMAND_WITHDRAW=1,
+	COMMAND_ACCBALANCE=2   //READ ONLY
+};
+struct COMMAND_ID 
+{
+	int client_id;
+	int cmd_seq_num;
+};
+struct COMMAND_ITEM
+{
+	int command_id;
+	enum COMMAND_TYPE command_type;
+	char command_data[BUFSIZE];
+};
 struct COMM_DATA
 {
 
