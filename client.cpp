@@ -1,7 +1,6 @@
 #include<stdio.h>
 #include<pthread.h>
 #include "pax_types.h"
-#include<random>
 
 
 
@@ -31,6 +30,60 @@ int CLIENT_PORT_LIST[MAX_CLIENTS] = {7000,7001};//,7002};
 
 struct COMM_DATA client_comm;
 
+int  get_next_command(int my_pid,int cmd_cnt,char *acc_name, int *cmd_type,char *op_args)
+{
+	FILE *fp;
+	char filename[FILENAME_LENGTH];
+	int i=0;
+	size_t len;
+	char *line=NULL;
+	ssize_t read;
+	char *tok;
+	char *data;
+
+	
+	strcpy(filename,COMMAND_FILE_PREFIX);
+	sprintf(filename,"%s%d",filename,my_pid);
+
+	fp = fopen(filename,"r");
+	if(fp == NULL)
+	{
+		printf("file could not be accessed\n");
+		return -1;
+	}		
+
+	while(( read = getline(&line,&len,fp)) != -1)
+	{
+		
+		if(i==cmd_cnt)
+			break;
+		i++;
+	}
+	if(read == -1)
+		return -1;
+	if(line[strlen(line)-1] == '\n')
+				line[strlen(line)-1]='\0';
+
+	strcpy(acc_name,strtok_r(line,DELIMITER_CMD,&tok));
+
+	data =  strtok_r(NULL,DELIMITER_CMD,&tok);
+
+	if(strcmp(data,"COMMAND_DEPOSIT") == 0)
+	{
+		*cmd_type = 0;
+	}
+	else if(strcmp(data,"COMMAND_WITHDRAW") == 0)
+	{
+		*cmd_type = 1;
+	}
+	else if(strcmp(data,"COMMAND_ACCBALANCE") == 0)
+	{
+		*cmd_type = 2;
+	}
+	strcpy(op_args,strtok_r(NULL,DELIMITER_CMD,&tok));
+
+	return 0;
+}
 bool configure_client(int my_pid,struct COMM_DATA *comm_client)
 {
 	
@@ -238,7 +291,7 @@ pthread_create(&listener_thread,NULL,listener,(void *)&client_comm);
 #if USERINPUT == 1
 while(1)
 {
-
+/*
 	printf("Enter account name:\n");
 	scanf("%s",acc_name);
 
@@ -247,6 +300,28 @@ while(1)
 	
 	printf("Enter amount:\n");
 	scanf("%s",op_arg);
+*/
+#if DEBUG == 1
+	printf("Client id %d: Command counter:%d\n",my_pid,command_counter);
+#endif
+	//populate acc_name, cmd_type and arguments to perform the command
+	ret = get_next_command(my_pid,command_counter,acc_name,&cmd_type,op_arg);
+	if(ret == -1)
+	{
+
+		printf("End of command list.. Exiting!\n");
+		break;
+	}
+#if DEBUG == 1
+	printf("Client id %d: Command details fetched an:%s\t ct:%d\t op_arg:%s\n",my_pid,acc_name,cmd_type,op_arg);
+#endif
+
+
+		CMD_DATA_PREP(acc_name,op_arg,cmd.command_data);
+		cmd.command_id = GET_NEXT_CMD_ID;
+		cmd.command_type = (enum COMMAND_TYPE) cmd_type;
+		command_counter++;	
+
 #else
 //tentative create commands
 
@@ -267,30 +342,26 @@ while(1)
 		CMD_DATA_PREP(acc_name,op_arg,user_cmd[i].command_data);
 		command_counter++;
 	}
-
-
 	for(i=0;i<COMMAND_COUNT;i++)
 	{
 #endif
+#if USERINPUT == 0	
+		cmd.command_id = user_cmd[i].command_id;
+		cmd.command_type = user_cmd[i].command_type;
+		strcpy(cmd.command_data,user_cmd[i].command_data);
+#endif	
 		for(j=0;j<MAX_REPLICAS;j++)
 		{
 		//send CMD REQUEST
 		//sending data in the format
 		//REQUEST:<CLIENT_ID>:<CMD_STRING>:
 
-#if USERINPUT == 1
-		CMD_DATA_PREP(acc_name,op_arg,cmd.command_data);
-		cmd.command_id = GET_NEXT_CMD_ID;
-		cmd.command_type = (enum COMMAND_TYPE) cmd_type;
-		command_counter++;	
-#else	
-		cmd.command_id = user_cmd[i].command_id;
-		cmd.command_type = user_cmd[i].command_type;
-		strcpy(cmd.command_data,user_cmd[i].command_data);
-#endif
-	
+
+
 			if(my_pid%2 == 0 && j<MAX_REPLICAS/2 || my_pid%2 == 1 && j>=MAX_REPLICAS/2)
 			{
+
+
 				strcpy(send_buff,"REQUEST");
 				strcat(send_buff,DELIMITER);
 				sprintf(send_buff,"%s%d",send_buff,my_pid);
@@ -327,13 +398,18 @@ while(1)
 	for(i=0;i<COMMAND_COUNT;i++)
 	{
 #endif
+#if USERINPUT == 0	
+		cmd.command_id = user_cmd[i].command_id;
+		cmd.command_type = user_cmd[i].command_type;
+		strcpy(cmd.command_data,user_cmd[i].command_data);
+#endif	
 		for(j=0;j<MAX_REPLICAS;j++)
 		{
 			
 		//send CMD REQUEST
 		//sending data in the format
 		//REQUEST:<CLIENT_ID>:<CMD_STRING>:
-
+/*
 #if USERINPUT == 1
 		CMD_DATA_PREP(acc_name,op_arg,cmd.command_data);
 		cmd.command_id = GET_NEXT_CMD_ID;
@@ -344,10 +420,10 @@ while(1)
 		cmd.command_type = user_cmd[i].command_type;
 		strcpy(cmd.command_data,user_cmd[i].command_data);
 #endif
-		
+	*/	
 			if(my_pid%2 == 0 && j<MAX_REPLICAS/2 || my_pid%2 == 1 && j>=MAX_REPLICAS/2)
 			{
-				printf("Client %d: Waiting for commmand %d to replica %d for 0.5 seconds\n",my_pid,i,j);
+				printf("Client %d: Waiting for commmand %d to replica %d for 0.5 seconds\n",my_pid,cmd.command_id,j);
 				usleep(50000);	
 	
 		
@@ -365,7 +441,7 @@ while(1)
 				strcat(send_buff,DELIMITER);
 				strcpy(cmd_str,"");
 				
-				printf("Client %d: Sending commmand %d to replica %d \n",my_pid,i,j);
+				printf("Client %d: Sending commmand %d to replica %d \n",my_pid,cmd.command_id,j);
 				ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
 		      			(struct sockaddr *)&replica_addr[j], replica_addr_len[j]);
 					

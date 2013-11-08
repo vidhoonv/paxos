@@ -13,10 +13,16 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <sys/time.h>
+#include<stdlib.h>
 
 #define DEBUG 1
-#define USERINPUT 0
+#define USERINPUT 1
 
+#define COMMAND_FILE_PREFIX "command_list_"
+#define FILENAME_LENGTH 100
+#define COMMAND_LENGTH 1000
+
+ 
 #define DELIMITER ":"
 #define DELIMITER_SEC ";"
 #define DELIMITER_CMD "-"
