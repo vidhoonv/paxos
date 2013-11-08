@@ -71,7 +71,7 @@ This will change along with client TENTATIVE
 				printf("\n>>>>>>>>Performed command %d\n",command); \
 				replica_state.slot_number += 1; \
 				replica_state.state += 1;	\
-				respond(TALKER,client_addr[client_cmd_map[command]],client_addr_len[client_cmd_map[command]]);	\
+				respond(TALKER,command,client_addr[client_cmd_map[command]],client_addr_len[client_cmd_map[command]]);	\
 			} \
 			repeat = false; \
 
@@ -80,7 +80,7 @@ int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
-int CLIENT_PORT_LIST[MAX_CLIENTS] = {7000,7001};
+int CLIENT_PORT_LIST[MAX_CLIENTS] = {7000,7001};//,7002};
 
 struct STATE_REPLICA {
 
@@ -90,7 +90,7 @@ struct STATE_REPLICA {
 	struct PROPOSAL decision_list; //<slot_number,command>
 };
 
-void respond(int talker_fd,struct sockaddr dest_addr, socklen_t dest_addr_len)
+void respond(int talker_fd,int command_id,struct sockaddr dest_addr, socklen_t dest_addr_len)
 {
 
 	int ret;
@@ -98,6 +98,10 @@ void respond(int talker_fd,struct sockaddr dest_addr, socklen_t dest_addr_len)
 
 	printf("\nSending response to client\n"); 	
 	strcpy(send_buff,"success");
+	strcat(send_buff,DELIMITER);
+	sprintf(send_buff,"%s%d",send_buff,command_id);	
+	strcat(send_buff,DELIMITER);
+
 	ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
       		(struct sockaddr *)&dest_addr, dest_addr_len);
 			
@@ -219,11 +223,13 @@ int main(int argc, char **argv)
 	int i,ret=0,recv_pid;
 	char buff_copy[BUFSIZE];
 	int slot_number,command;
-	char *data;
+	char *data,*cstr;
 	bool repeat= false;
 
 //tentative
 	int client_cmd_map[MAX_SLOTS];
+	enum COMMAND_TYPE client_cmdtype_map[MAX_SLOTS];
+	char client_cmddata_map[MAX_SLOTS][BUFSIZE/2];
 
 //initialization
 	std::fill(replica_state.proposal_list.command, replica_state.proposal_list.command+MAX_SLOTS, -1);
@@ -324,12 +330,17 @@ int main(int argc, char **argv)
 			{
 				//recved from client
 				//expects data in the format
-				//REQUEST:<CLIENT_ID>:<COMMAND>:
+				//REQUEST:<CLIENT_ID>:<COMMAND_STR>:
 
-				//retrive command (TENTATIVE)
-				command = atoi(strtok(NULL,DELIMITER));
-				//tentative
+				//retrive command string
+				cstr = strtok(NULL,DELIMITER);
+
+				command = atoi(strtok(cstr,DELIMITER_SEC));
+							
+				client_cmdtype_map[command]= (enum COMMAND_TYPE)atoi(strtok(NULL,DELIMITER_SEC));
+				strcpy(client_cmddata_map[command],strtok(NULL,DELIMITER_SEC));				
 				client_cmd_map[command] = recv_pid;
+				
 				//check for repeat request
 				for(i=0;i<MAX_SLOTS;i++)
 				{
