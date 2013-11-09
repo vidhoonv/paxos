@@ -146,7 +146,7 @@ bool configure_client(int my_pid,struct COMM_DATA *comm_client)
 return true;
 }
 
-void* listener(void *arg)
+void* listener(int cmd_id,void *arg)
 {
 //comm listening variables
 	fd_set readfds;
@@ -165,12 +165,8 @@ void* listener(void *arg)
 	int recv_cmd_id;
 	struct COMM_DATA *client_comm = (struct COMM_DATA *)arg;
 
-
-//reply counter
-	int reply_counter=0;
-
-	printf("listening\n");
-	while(reply_counter<MAX_REPLICAS)
+	printf("listening for cmd %d\n",cmd_id);
+	while(1)
 	{
 	
 		maxfd = client_comm->comm_fd[LISTENER_INDEX]+1;
@@ -216,7 +212,8 @@ void* listener(void *arg)
 			
 	
 		}
-		reply_counter++;
+		if(cmd_id == recv_cmd_id)
+			break;
 	}
 	
 }
@@ -468,7 +465,7 @@ while(1)
 	 
 #if USERINPUT == 1
 
-listener((void *)&client_comm);
+listener(cmd.command_id,(void *)&client_comm);
 } //while loop
 #endif	
 	
