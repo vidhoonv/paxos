@@ -68,7 +68,6 @@ This will change along with client TENTATIVE
 			}	\
 			if(!repeat)	\
 			{	\
-				printf("trying to do command %d\n",command);	\
 				rc = do_command(my_pid,client_cmdtype_map[command],client_cmddata_map[command]);	\
 				printf("\n>>>>>>>>Performed command %d res:%d\n",command,rc); \
 				replica_state.slot_number += 1; \
@@ -119,17 +118,17 @@ int do_command(int my_pid,int cmd_type,char* cmd_data)
 		printf("file could not be accessed\n");
 		return -1;
 	}	
-	printf("while doing command: cmd_type:%d cmd_data:%s\n",cmd_type,cmd_data);
+	//printf("while doing command: cmd_type:%d cmd_data:%s\n",cmd_type,cmd_data);
 	
 	strcpy(acc_name,strtok(cmd_data,DELIMITER_CMD));
 	op_arg = atoi(strtok(NULL,DELIMITER_CMD));
 
-	printf("while doing command: acc:%s arg:%d\n",acc_name,op_arg);
+	//printf("while doing command: acc:%s arg:%d\n",acc_name,op_arg);
 	switch(cmd_type)
 	{
 		case COMMAND_DEPOSIT:
 					fail = true;
-					printf("!!!doing deposit\n");
+					//printf("!!!doing deposit\n");
 					fptemp = fopen(tempname,"a+");
 					if(fptemp == NULL)
 					{
@@ -582,7 +581,7 @@ int main(int argc, char **argv)
 						printf("proposing again for command %d found at slot %d!!!!\n",command,slot_number);
 						PROPOSE_COMMAND(command);
 					}
-					printf("!!!trying to perform command %d\n",command);
+					//printf("!!!trying to perform command %d\n",command);
 					command = replica_state.decision_list.command[replica_state.slot_number];
 					PERFORM_COMMAND(command);
 				}

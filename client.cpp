@@ -165,9 +165,14 @@ void* listener(void *arg)
 	int recv_cmd_id;
 	struct COMM_DATA *client_comm = (struct COMM_DATA *)arg;
 
-	printf("listener thread created\n");
-	while(1)
+
+//reply counter
+	int reply_counter=0;
+
+	printf("listening\n");
+	while(reply_counter<MAX_REPLICAS)
 	{
+	
 		maxfd = client_comm->comm_fd[LISTENER_INDEX]+1;
 		FD_ZERO(&readfds); 
 		FD_SET(client_comm->comm_fd[LISTENER_INDEX], &readfds);
@@ -211,7 +216,9 @@ void* listener(void *arg)
 			
 	
 		}
+		reply_counter++;
 	}
+	
 }
 
 void* client(void *thread_data)
@@ -283,7 +290,7 @@ void* client(void *thread_data)
 	}
 
 //create listener thread
-pthread_create(&listener_thread,NULL,listener,(void *)&client_comm);	
+//pthread_create(&listener_thread,NULL,listener,(void *)&client_comm);	
 
 /*input part
 
@@ -460,10 +467,12 @@ while(1)
 #endif
 	 
 #if USERINPUT == 1
+
+listener((void *)&client_comm);
 } //while loop
 #endif	
 	
-	pthread_join(listener_thread,NULL);
+	//pthread_join(listener_thread,NULL);
 }
 	
 	
@@ -493,6 +502,9 @@ int main(int argc, char **argv)
 	}
 
 printf("end of main\n");
-pthread_join(client_thread[i-1],NULL);
+for(i=0;i<client_count;i++)
+{
+pthread_join(client_thread[i],NULL);
+}
 return 0;
 }
