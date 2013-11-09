@@ -161,7 +161,7 @@ void* listener(void *arg)
 //misc
 	int i,ret=0,recv_pid;
 	char buff_copy[BUFSIZE];
-	char *data,*tok;
+	char *data,*tok,*res;
 	int recv_cmd_id;
 	struct COMM_DATA *client_comm = (struct COMM_DATA *)arg;
 
@@ -199,12 +199,14 @@ void* listener(void *arg)
 			strcpy(buff_copy,recv_buff);			
 			data = strtok_r(buff_copy,DELIMITER,&tok);
 
-			
+			recv_pid = atoi(strtok_r(NULL,DELIMITER,&tok));
 //retrive recv_pid
 			recv_cmd_id = atoi(strtok_r(NULL,DELIMITER,&tok));
 
+			res = strtok_r(NULL,DELIMITER,&tok);
+
 #if DEBUG==1
-				printf("recved msg from replica content:%s for command %d\n",data,recv_cmd_id);
+				printf("recved msg from replica content:%s for command %d  res:%s\n",data,recv_cmd_id,res);
 #endif
 			
 	
@@ -358,7 +360,7 @@ while(1)
 
 
 
-			if(my_pid%2 == 0 && j<MAX_REPLICAS/2 || my_pid%2 == 1 && j>=MAX_REPLICAS/2)
+			if(my_pid%2 == 1 && j<MAX_REPLICAS/2 || my_pid%2 == 0 && j>=MAX_REPLICAS/2)
 			{
 
 

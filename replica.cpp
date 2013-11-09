@@ -68,10 +68,12 @@ This will change along with client TENTATIVE
 			}	\
 			if(!repeat)	\
 			{	\
-				printf("\n>>>>>>>>Performed command %d\n",command); \
+				printf("trying to do command %d\n",command);	\
+				rc = do_command(my_pid,client_cmdtype_map[command],client_cmddata_map[command]);	\
+				printf("\n>>>>>>>>Performed command %d res:%d\n",command,rc); \
 				replica_state.slot_number += 1; \
 				replica_state.state += 1;	\
-				respond(TALKER,command,client_addr[client_cmd_map[command]],client_addr_len[client_cmd_map[command]]);	\
+				respond(my_pid,TALKER,command,client_addr[client_cmd_map[command]],client_addr_len[client_cmd_map[command]],rc);	\
 			} \
 			repeat = false; \
 
@@ -90,17 +92,207 @@ struct STATE_REPLICA {
 	struct PROPOSAL decision_list; //<slot_number,command>
 };
 
-void respond(int talker_fd,int command_id,struct sockaddr dest_addr, socklen_t dest_addr_len)
+int do_command(int my_pid,int cmd_type,char* cmd_data)
+{
+	FILE *fp,*fptemp;
+	char filename[FILENAME_LENGTH];
+	char tempname[FILENAME_LENGTH];
+	int i=0,balance=0;
+	size_t len;
+	char *line=NULL;
+	ssize_t read;
+	char acc_name[BUFSIZE/2],ac_nm[BUFSIZE/2];
+	int  op_arg;
+	bool fail=false;
+	
+	strcpy(filename,RESOURCE_FILE_PREFIX);
+	sprintf(filename,"%s%d",filename,my_pid);
+	strcat(filename,".res");
+
+	strcpy(tempname,"temp");
+	sprintf(tempname,"%s%d",tempname,my_pid);
+	strcat(tempname,".res");	
+	
+	fp = fopen(filename,"a+");
+	if(fp == NULL)
+	{
+		printf("file could not be accessed\n");
+		return -1;
+	}	
+	printf("while doing command: cmd_type:%d cmd_data:%s\n",cmd_type,cmd_data);
+	
+	strcpy(acc_name,strtok(cmd_data,DELIMITER_CMD));
+	op_arg = atoi(strtok(NULL,DELIMITER_CMD));
+
+	printf("while doing command: acc:%s arg:%d\n",acc_name,op_arg);
+	switch(cmd_type)
+	{
+		case COMMAND_DEPOSIT:
+					fail = true;
+					printf("!!!doing deposit\n");
+					fptemp = fopen(tempname,"a+");
+					if(fptemp == NULL)
+					{
+						printf("file could not be accessed\n");
+						return -1;
+					}	
+					while(( read = getline(&line,&len,fp)) != -1)
+					{
+						if(line[strlen(line)-1] == '\n')
+						{				
+							line[strlen(line)-1]='\0';
+						}
+						sscanf(line,"%s %d",ac_nm,&balance);
+						//printf("from file: acc name %sac_nm:%s bal %d\n",acc_name,ac_nm,balance);
+						if(strcmp(ac_nm,acc_name) == 0)
+						{
+							fprintf(fptemp,"%s %d\n",acc_name,balance+op_arg);  //adding deposit amount to store new balance
+							fail =  false;
+							continue;				
+						}
+						else
+						{
+						//printf("not equal %d\n",strcmp(ac_nm,acc_name));
+						}
+						fprintf(fptemp,"%s\n",line);
+			
+					}
+					fclose(fptemp);
+					fclose(fp);
+					if(fail == true)
+					{
+						if(unlink(tempname) == -1)  //deleting old log file
+							printf("deleting temp resource file failed\n");
+						else
+							printf("temp res file deleted\n");
+						return -1;
+	
+					}
+				//	printf("!!!deposit complete\n");
+					if(unlink(filename) == -1)  //deleting old log file
+						printf("deleting old resource file failed\n");
+					else
+						printf("old res file deleted\n");
+					if(rename(tempname,filename) == -1) //rename 
+						printf("new resource file rename failed\n");
+					else
+						printf("new resource file ready\n");
+					break;
+		case COMMAND_WITHDRAW:
+					fail=true;
+					fptemp = fopen(tempname,"a+");
+					if(fptemp == NULL)
+					{
+						printf("file could not be accessed\n");
+						return -1;
+					}	
+					while(( read = getline(&line,&len,fp)) != -1)
+					{
+						if(line[strlen(line)-1] == '\n')
+						{				
+							line[strlen(line)-1]='\0';
+						}
+						sscanf(line,"%s %d",ac_nm,&balance);
+						//printf("from file: acc name %sac_nm:%s bal %d\n",acc_name,ac_nm,balance);
+						if(strcmp(ac_nm,acc_name) == 0)
+						{
+
+							if(balance>=op_arg)
+							{
+								fprintf(fptemp,"%s %d\n",acc_name,balance-op_arg);  //adding deposit amount to store new balance
+								fail=false;
+								continue;
+							}
+							else
+							{
+								fail = true;
+								break;
+							}				
+						}
+						fprintf(fptemp,"%s\n",line);
+			
+					}
+					fclose(fptemp);
+					fclose(fp);
+					if(fail == true)
+					{
+						if(unlink(tempname) == -1)  //deleting old log file
+							printf("deleting temp resource file failed\n");
+						else
+							printf("temp res file deleted\n");
+						return -1;
+	
+					}
+					if(unlink(filename) == -1)  //deleting old log file
+						printf("deleting old resource file failed\n");
+					else
+						printf("old res file deleted\n");
+					if(rename(tempname,filename) == -1) //rename 
+						printf("new resource file rename failed\n");
+					else
+						printf("new resource file ready\n");
+					break;
+				
+					break;
+		case COMMAND_ACCBALANCE:
+					fptemp = fopen(tempname,"a+");
+					if(fptemp == NULL)
+					{
+						printf("file could not be accessed\n");
+						return -1;
+					}	
+					while(( read = getline(&line,&len,fp)) != -1)
+					{
+						if(line[strlen(line)-1] == '\n')
+						{				
+							line[strlen(line)-1]='\0';
+						}
+						sscanf(line,"%s %d",ac_nm,&balance);
+						if(strcmp(ac_nm,acc_name) == 0)
+						{
+							//required entry found - return balance
+							printf("Executing read command for %s - balance:%d\n",ac_nm,balance);
+							return balance;
+						}
+					}
+						return -1; //entry not found 
+					break;
+
+		default:
+				printf("!!!some invalid command\n");
+				return -1;
+
+	}	
+
+
+}
+void respond(int my_pid,int talker_fd,int command_id,struct sockaddr dest_addr, socklen_t dest_addr_len,int result)
 {
 
 	int ret;
 	char send_buff[BUFSIZE];
 
-	printf("\nSending response to client\n"); 	
-	strcpy(send_buff,"success");
+	printf("\nSending response to client\n");
+	strcpy(send_buff,"RESPONSE"); 	
+	strcat(send_buff,DELIMITER);
+	sprintf(send_buff,"%s%d",send_buff,my_pid);	
 	strcat(send_buff,DELIMITER);
 	sprintf(send_buff,"%s%d",send_buff,command_id);	
 	strcat(send_buff,DELIMITER);
+
+	if(result == -1)
+	{
+		
+		strcat(send_buff,"F");
+
+	}
+	else
+	{
+		
+		strcat(send_buff,"S");
+	}
+	strcat(send_buff,DELIMITER);
+	
 
 	ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
       		(struct sockaddr *)&dest_addr, dest_addr_len);
@@ -198,6 +390,7 @@ int main(int argc, char **argv)
 	struct COMM_DATA replica_comm;
 	struct STATE_REPLICA replica_state;
 	int my_pid;
+	int rc=0;
 
 //comm common
 	struct sockaddr_storage temp_paddr;
@@ -234,6 +427,7 @@ int main(int argc, char **argv)
 //initialization
 	std::fill(replica_state.proposal_list.command, replica_state.proposal_list.command+MAX_SLOTS, -1);
 	std::fill(replica_state.decision_list.command, replica_state.decision_list.command+MAX_SLOTS, -1);
+	std::fill(client_cmd_map, client_cmd_map+MAX_SLOTS, -1);
 
 	replica_state.slot_number =0;
 	replica_state.state =0;
@@ -374,7 +568,7 @@ int main(int argc, char **argv)
 				replica_state.decision_list.command[slot_number] = command;
 
 				//execute decisions from current slot number
-				while(replica_state.decision_list.command[replica_state.slot_number] != -1)
+				while(replica_state.decision_list.command[replica_state.slot_number] != -1 && client_cmd_map[replica_state.decision_list.command[replica_state.slot_number]] != -1) //check for slot number and also for arrival of command data (replica cant perform command before arrival of command data
 				{
 					//decision is available for current slot_number
 
@@ -388,6 +582,7 @@ int main(int argc, char **argv)
 						printf("proposing again for command %d found at slot %d!!!!\n",command,slot_number);
 						PROPOSE_COMMAND(command);
 					}
+					printf("!!!trying to perform command %d\n",command);
 					command = replica_state.decision_list.command[replica_state.slot_number];
 					PERFORM_COMMAND(command);
 				}

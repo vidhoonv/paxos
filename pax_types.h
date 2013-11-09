@@ -19,6 +19,7 @@
 #define USERINPUT 1
 
 #define COMMAND_FILE_PREFIX "command_list_"
+#define RESOURCE_FILE_PREFIX "rep"
 #define FILENAME_LENGTH 100
 #define COMMAND_LENGTH 1000
 
