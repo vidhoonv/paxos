@@ -146,11 +146,15 @@ bool broadcast_proposal(int talker_fd,int my_pid,struct PVAL proposal,struct soc
 	}
 return true;	
 }
-bool broadcast_replicas(int talker_fd,char send_buff[],struct sockaddr replica_addr[],socklen_t replica_addr_len[])
+bool broadcast_replicas(int my_pid,int talker_fd,char send_buff[],struct sockaddr replica_addr[],socklen_t replica_addr_len[])
 {
 	int i,ret;
 	for(i=0;i<MAX_REPLICAS;i++)
 	{
+/* LEADER FAILURE DETECTION TEST CASE
+		if(i==1 && my_pid==0)
+			exit(-1);
+*/
 		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
       			(struct sockaddr *)&replica_addr[i], replica_addr_len[i]);
 			
@@ -390,7 +394,7 @@ void* commander(void *thread_data) //acceptor list and replica list is global
 						sprintf(send_buff,"%s%d",send_buff,my_pval.command);
 						strcat(send_buff,DELIMITER);
 
-						if(broadcast_replicas(TALKER_COMMANDER,send_buff,replica_addr,replica_addr_len))
+						if(broadcast_replicas(my_pid,TALKER_COMMANDER,send_buff,replica_addr,replica_addr_len))
 						{
 #if DEBUG == 1
 							LOG4CXX_TRACE(CommLogger,"Commander id: " << my_pid << " decision broadcasted \n");

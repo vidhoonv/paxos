@@ -22,7 +22,7 @@ LoggerPtr LeaderLogger(Logger::getLogger("leader"));
 #define DECREASE_INDEX 1
 
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002,4003};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
@@ -154,6 +154,44 @@ bool configure_leader(int my_pid,struct COMM_DATA *comm_leader)
 return true;
 }
 
+int get_current_active_leader(int lstatus[])
+{
+	int i;
+
+	for(i=0;i<MAX_LEADERS;i++)
+	{
+		if(lstatus[i] == 1)
+			return i;
+	}
+}
+bool broadcast_leaders(int my_pid,int talker_fd,char send_buff[],struct sockaddr leader_addr[],socklen_t leader_addr_len[])
+{
+	int i,ret;
+	for(i=0;i<MAX_LEADERS;i++)
+	{
+//network partition (simulated by msg loss)
+		if(my_pid==0 && i==1 || my_pid==1 && i==0)
+			continue;
+/*
+//LEADER FAILURE DETECTION TEST CASE
+		if(my_pid == 0 && i==2)
+			exit(-1);
+*/		if(i!=my_pid)
+		{
+		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
+      			(struct sockaddr *)&leader_addr[i], leader_addr_len[i]);
+			
+		if (ret < 0)
+     		{
+      			perror("sendto ");
+		        close(talker_fd);
+      			return false;
+     		}
+		}
+		
+	}
+return true;
+}
 int main(int argc,char **argv)
 {
 	struct COMM_DATA leader_comm;
@@ -173,9 +211,13 @@ int main(int argc,char **argv)
 	int maxfd;
 	char recv_buff[BUFSIZE];
 	int nread=0;	
-
+//comm sending variables
+	char send_buff[BUFSIZE];
+	struct sockaddr_in *leader_addr_in[MAX_LEADERS];
+	struct sockaddr leader_addr[MAX_LEADERS];
+	socklen_t leader_addr_len[MAX_LEADERS];
 //misc
-	int i,ret=0,recv_pid;
+	int i,ret=0,recv_pid,rc=0;
 	bool command_found = false;
 	char *data,*temp,*tok,*tok1;
 	char *ballot_str,*pvals_str,*pstr;
@@ -185,7 +227,6 @@ int main(int argc,char **argv)
 
 //threads
 	pthread_t commander_thread[MAX_COMMANDERS_PER_LEADER],scout_thread[MAX_SCOUTS_PER_LEADER];
-	int rc=0;
 	struct COMMANDER_THREAD_ARG comm_create_args[MAX_COMMANDERS_PER_LEADER];
 	int count_commanders=0, count_scouts=0;
 	struct SCOUT_THREAD_ARG scout_create_args[MAX_SCOUTS_PER_LEADER];
@@ -195,6 +236,13 @@ int main(int argc,char **argv)
 	int acc_pvals_command[MAX_SLOTS] = {-1}; //for time being this is int to into - might changed based on type of 'command'
 					// this contains acc_pvals_command[slot_number]= command with highest ballot number from acceptor 
 
+//leader status
+	int leader_status[MAX_LEADERS];
+	int active_leader;
+	int ping_timeout = 5;
+
+//timeout
+	struct timeval tv;
 	//check runtime arguments
 	if(argc!=2)
 	{
@@ -208,16 +256,20 @@ int main(int argc,char **argv)
 	//leader_state.plist.current_length = 0;
 	leader_state.ballot.bnum = 0;
 	leader_state.ballot.leader_id = my_pid;
-	leader_state.lstatus = LEADER_INACTIVE;
+	leader_state.lstatus = LEADER_INACTIVE; 
 
 	std::fill(acc_pvals_command, acc_pvals_command + MAX_SLOTS, -1);
 	std::fill(leader_state.plist.command,leader_state.plist.command+MAX_SLOTS,-1);
+
+	std::fill(leader_status, leader_status + MAX_LEADERS, 1); //All leaders are alive
 
 	leader_state.preemption_timeout = 2000000;
 	leader_state.timeout_factor[INCREASE_INDEX] = 1.5;
 	leader_state.timeout_factor[DECREASE_INDEX] = 1000000;
 
 	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "timeout factors " << leader_state.timeout_factor[INCREASE_INDEX] << "," << leader_state.timeout_factor[DECREASE_INDEX]<<"\n");
+
+
 	//hostname configuration
 	gethostname(hostname, sizeof(hostname));
 	hp = gethostbyname(hostname);
@@ -227,6 +279,17 @@ int main(int argc,char **argv)
 		//printf("\n%s: unknown host.\n", hostname); 
 		return 0; 
 	} 
+	
+	//setup leader addresses
+	for(i=0;i<MAX_LEADERS;i++)
+	{
+		leader_addr_in[i] = (struct sockaddr_in *)&(leader_addr[i]);
+		leader_addr_in[i]->sin_family = AF_INET;
+		memcpy(&leader_addr_in[i]->sin_addr, hp->h_addr, hp->h_length); 
+		leader_addr_in[i]->sin_port  = htons(LEADER_PORT_LIST[i]);  
+		leader_addr_len[i] = sizeof(leader_addr[i]);
+	}
+
 	//configure leader talker and listener ports	
 	//setup the leader 
 	if(configure_leader(my_pid,&leader_comm))
@@ -240,7 +303,11 @@ int main(int argc,char **argv)
 		//printf("Error in config of leader id: %d\n",my_pid);
 		return -1;
 	}
-	
+
+	active_leader = get_current_active_leader(leader_status);
+
+	if(active_leader == my_pid)
+	{
 #if DEBUG==1
 	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");
 	//printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
@@ -252,14 +319,49 @@ int main(int argc,char **argv)
 	rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 	count_scouts++;
 
+		//send alive message to all leader
+		printf("\nSending alive message to all leaders\n");
+		strcpy(send_buff,"ALIVE"); 	
+		strcat(send_buff,DELIMITER);
+		sprintf(send_buff,"%s%d",send_buff,my_pid);	
+		strcat(send_buff,DELIMITER);
+		
+		
+			
+		if (broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
+		{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcasted \n");
+							printf("alive broadcasted at leader %d\n",my_pid);
+							
+#endif
+							
+		}
+		else
+		{
+			LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcast failed \n");			
+			printf("broadcast of alive failed at leader %d\n",my_pid);	
+		}
+
+	}
+	else
+	{
+		tv.tv_sec = ping_timeout;
+		tv.tv_usec = 0;	
+
+	}
+
 	while(1)
 	{
 		maxfd = LISTENER+1;
 		FD_ZERO(&readfds); 
 		FD_SET(LISTENER, &readfds);
-
-		ret = select(maxfd, &readfds, NULL, NULL, NULL);  //blocks forever till it receives a message
-
+		if(my_pid == active_leader)
+		{
+			ret = select(maxfd, &readfds, NULL, NULL, NULL);  //blocks forever till it receives a message
+		}
+		else
+			ret = select(maxfd, &readfds, NULL, NULL, &tv); 
 
 		if(ret <0)
 	   	{ 
@@ -267,7 +369,58 @@ int main(int argc,char **argv)
 	     		//printf("\nLeader id: %d Select error\n",my_pid);   
 	     		return -1;
 	   	} 
+		if(ret == 0)
+		{
+			printf("Time out while waiting for msgs\n");
+			leader_status[active_leader] = 0;
+			active_leader = get_current_active_leader(leader_status);
 
+			if(active_leader == my_pid)
+			{
+#if DEBUG==1
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");
+				//printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
+#endif
+				//create a new scout thread
+				scout_create_args[count_scouts].parent_id = my_pid;
+				scout_create_args[count_scouts].my_pid = count_scouts+my_pid*MAX_SCOUTS_PER_LEADER;
+				scout_create_args[count_scouts].my_ballot = leader_state.ballot; 
+				rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
+				count_scouts++;
+
+				//send ping message to active leader
+				printf("\nSending alive message to all leader\n");
+				strcpy(send_buff,"ALIVE"); 	
+				strcat(send_buff,DELIMITER);
+				sprintf(send_buff,"%s%d",send_buff,my_pid);	
+				strcat(send_buff,DELIMITER);
+		
+		
+			
+				if (broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
+				{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcasted \n");
+							printf("alive broadcasted at leader %d\n",my_pid);
+							
+#endif
+							
+				}
+				else
+				{
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcast failed \n");			
+							printf("broadcast of alive failed at leader %d\n",my_pid);	
+				}
+			}
+			else
+			{
+		
+				tv.tv_sec = ping_timeout;
+				tv.tv_usec = 0;	
+				continue;
+
+			}			
+		}
 		if(FD_ISSET (LISTENER, &readfds))
 		{
 			temp_paddr_len = sizeof(temp_paddr);
@@ -289,7 +442,7 @@ int main(int argc,char **argv)
 //retrive recv_pid
 				recv_pid = atoi(strtok_r(NULL,DELIMITER,&tok));
 #if DEBUG==1
-				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << " from: " << recv_pid << "\n");
+			//	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << " from: " << recv_pid << "\n");
 				//printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
 #endif		
 			if(strcmp(data,"PROPOSE") == 0)
@@ -307,6 +460,10 @@ int main(int argc,char **argv)
 				if(leader_state.plist.command[slot_number] == -1)
 				{
 					//new proposal
+/*TESTCASE - LEADER 0 FAILS AFTER RECEIVING PROPOSAL FOR SLOT 1 (FAILURE DETECTION OF LEADERS)
+					if(my_pid ==0 && slot_number==1)
+						exit(-1);
+*/
 #if DEBUG==1
 					LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "no previous proposal for slot number -- added to plist!\n");
 					//printf("Leader id: %d no previous proposal for slot number -- added to plist!\n",my_pid);
@@ -412,7 +569,9 @@ printf("!!!!here\n");
 				//received from SCOUT or COMMANDER
 				//expects data in the format
 				//PREEMPTED:SENDER_ID:BALLOT:
-
+#if DEBUG==1
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " preempted " << "\n");
+#endif	
 				ballot_str = strtok_r(NULL,DELIMITER,&tok);
 
 				//retrive components of the recv_ballot
@@ -478,12 +637,80 @@ printf("!!!!here\n");
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " removed entry for slot "  << slot_number << "\n");
 #endif
 			}
+			else if(strcmp(data,"ALIVE") == 0)
+			{
+				
+				if(active_leader != recv_pid)
+				{
+					leader_status[active_leader] = -1;					
+					active_leader = recv_pid;
+				}	
+				//send ping message to active leader
+				printf("\nSending ping message to active leader\n");
+				strcpy(send_buff,"PING"); 	
+				strcat(send_buff,DELIMITER);
+				sprintf(send_buff,"%s%d",send_buff,my_pid);	
+				strcat(send_buff,DELIMITER);
+				
+				rc = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+      					(struct sockaddr *)&leader_addr[active_leader], leader_addr_len[active_leader]);
+			
+				if (rc < 0)
+     				{
+      					perror("sendto ");
+		    		    close(TALKER);
+      					//return false;
+     				}			
+				tv.tv_sec = ping_timeout;
+				tv.tv_usec = 0;	
+	
+				
+			}
+			else if(strcmp(data,"PING") == 0)
+			{
+			//send ping message to active leader
+				if(active_leader != my_pid)
+				{
+				leader_status[active_leader] = 0;
+				active_leader = my_pid;
+
+
+				#if DEBUG==1
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");
+				//printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
+#endif
+				//create a new scout thread
+				scout_create_args[count_scouts].parent_id = my_pid;
+				scout_create_args[count_scouts].my_pid = count_scouts+my_pid*MAX_SCOUTS_PER_LEADER;
+				scout_create_args[count_scouts].my_ballot = leader_state.ballot; 
+				rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
+				count_scouts++;
+
+				}
+				printf("responding to ping message by active leader\n");
+				strcpy(send_buff,"ALIVE"); 	
+				strcat(send_buff,DELIMITER);
+				sprintf(send_buff,"%s%d",send_buff,my_pid);	
+				strcat(send_buff,DELIMITER);
+				
+				rc = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+      					(struct sockaddr *)&leader_addr[recv_pid], leader_addr_len[recv_pid]);
+			
+				if (rc < 0)
+     				{
+      					perror("sendto ");
+		    		    close(TALKER);
+      					//return false;
+     				}			
+			}
 			else
 			{
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " undefined msg received"  << data << "\n");
 				//printf("undefined msg received at leader id: %d msg:%s\n",my_pid,data);
 			}
 		}
+		
+		
 	}	
 return 0;
 }
