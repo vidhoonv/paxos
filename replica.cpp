@@ -426,7 +426,7 @@ int main(int argc, char **argv)
 	int i,ret=0,recv_pid;
 	char buff_copy[BUFSIZE];
 	int slot_number,command;
-	char *data,*cstr,*cmd_str;
+	char *data,*cstr,*cmd_str,*tok;
 	bool repeat= false;
 	bool first_request = false;
 	int recent_leader_pid = -1;
@@ -622,12 +622,12 @@ printf("\n\nCurrent slot number %d\n\n",replica_state.slot_number);
 					//this is a read command
 
 					cstr = strtok(NULL,DELIMITER);
-					cmd_str = strtok(cstr,DELIMITER_SEC);
+					cmd_str = strtok_r(cstr,DELIMITER_SEC,&tok);
 					while(cmd_str)
 					{
 						command =  atoi(cmd_str);
 						PERFORM_COMMAND(command);
-						cmd_str = strtok(NULL,DELIMITER_SEC);
+						cmd_str = strtok_r(NULL,DELIMITER_SEC,&tok);
 					}
 
 					//send READ-COMMIT to leader

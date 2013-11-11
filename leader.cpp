@@ -263,9 +263,10 @@ int main(int argc,char **argv)
 	int leader_status[MAX_LEADERS];
 	int active_leader;
 	int ping_timeout = 5;
-	int read_timeout = 2;
+	int read_timeout = 10;
+	int update_timeout = 5;
 //timeout
-	struct timeval tv,tread;
+	struct timeval tv,tread,tupdate;
 	struct timeval *tptr=NULL;
 //command execution
 	int current_batch =1;
@@ -276,6 +277,7 @@ int main(int argc,char **argv)
 	int uptodate_replicas[MAX_REPLICAS];
 	int replica_status[MAX_REPLICAS];
 	int latest_replica_pid = -1;
+	bool noupdate = false;
 	int read_issued_till = -1;
 
 	//check runtime arguments
@@ -308,7 +310,11 @@ int main(int argc,char **argv)
 
 	tread.tv_sec = 0;
 	tread.tv_usec = 0;	
-	tptr = NULL;
+
+	tupdate.tv_sec = update_timeout;
+	tupdate.tv_usec = 0;	
+
+	tptr = &tupdate; //intially providing update timeout
 
 	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "timeout factors " << leader_state.timeout_factor[INCREASE_INDEX] << "," << leader_state.timeout_factor[DECREASE_INDEX]<<"\n");
 
@@ -422,11 +428,43 @@ int main(int argc,char **argv)
 	   	} 
 		if(ret == 0)
 		{
-			printf("Time out while waiting for msgs\n");
+			printf("Time out while waiting for msgs %d read_cmd_counter %d\n",latest_replica_pid,read_command_counter);
 
 			if(active_leader == my_pid)
 			{
 
+				if(latest_replica_pid == -1)
+				{
+					//timeout waiting for commit
+
+					//this can happen only if either all replicas failed or there was no update command in the current batch
+					//since only all but 1 replicas can fail in the system, we only consider the case that there were no update commands
+
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " no updates in current batch "<< current_batch <<" \n");
+							printf("Leader id: %d no updates in current batch %d\n",my_pid,current_batch);
+							
+#endif
+					//no way to determine live replica at first - so proceed by trail and error basis
+					latest_replica_pid = 0;
+					//set boolean flag 
+					noupdate = true;
+
+				}
+				else
+				{
+					if(read_issued == false)
+					{
+
+						//there was no read commands that were sent and leader timed out
+						// in this case leader did not time out on read commit 
+						// so just wait for update commands
+						
+						tupdate.tv_sec = update_timeout;
+						tupdate.tv_usec = 0;
+						tptr = &tupdate;
+						continue;
+					}
 				//timeout waiting for read commit
 				
 				//do read again to some other replica
@@ -435,25 +473,38 @@ int main(int argc,char **argv)
 							printf("detected replica %d dead\n",my_pid,latest_replica_pid);
 							
 #endif
-				replica_status[latest_replica_pid] = 0;
+					replica_status[latest_replica_pid] = 0;
+					if(current_batch == 1)
+					{
+						latest_replica_pid++;
+						if(latest_replica_pid == MAX_REPLICAS)
+						{
+							printf("!!finding uptodate replica failed\n");
+							return -1;
+						}
+					}
+					else
+					{
+						for(i=0;i<MAX_REPLICAS;i++)
+						{
 
-				for(i=0;i<MAX_REPLICAS;i++)
-				{
+							if(replica_status[i] == 1 && uptodate_replicas[i] == 1)
+								break;
+						}
+						if(i== MAX_REPLICAS)
+						{
+							printf("!!finding uptodate replica failed\n");
+							return -1;
+						}	
+						latest_replica_pid = i;
+					}
+				}
 
-					if(replica_status[i] == 1 && uptodate_replicas[i] == 1)
-						break;
-				}
-				if(i== MAX_REPLICAS)
-				{
-					printf("!!finding uptodate replica failed\n");
-					return -1;
-				}
-				latest_replica_pid = i;
-				//send read commands to another replica
-				//issue read commands accumulated during this batch to this replica
-				i=read_command_counter;
-				if(read_commands[i] != -1)
-				{
+					//send read commands to another replica
+					//issue read commands accumulated during this batch to this replica
+					i=read_command_counter;
+					if(read_commands[i] != -1)
+					{
 						//there is an accumulated read command
 						//sending data in the format
 						//DECISION:COMMANDER_ID:-1:COMMAND
@@ -465,17 +516,29 @@ int main(int argc,char **argv)
 						sprintf(send_buff,"%s%d",send_buff,-1);
 						strcat(send_buff,DELIMITER);
 
-					while(read_commands[i] != -1)
-					{
+						while(read_commands[i] != -1)
+						{
+
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " sending read command "<< i<< " \n");
+							printf("sending read command %d \n",i);
+							
+#endif
 					
-						sprintf(send_buff,"%s%d",send_buff,read_commands[i]);
-						strcat(send_buff,DELIMITER_SEC);
+							sprintf(send_buff,"%s%d",send_buff,read_commands[i]);
+							strcat(send_buff,DELIMITER_SEC);
 					
-						i++;
-					}
+							i++;
+						}
 						strcat(send_buff,DELIMITER);
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " read command string "<< send_buff<< " \n");
+							printf("sending read command %s \n",send_buff);
+							
+#endif	
+
 						ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
-      								(struct sockaddr *)&replica_addr[recv_pid], replica_addr_len[recv_pid]);
+      								(struct sockaddr *)&replica_addr[latest_replica_pid], replica_addr_len[latest_replica_pid]);
 			
 						if (ret < 0)
      						{
@@ -483,21 +546,29 @@ int main(int argc,char **argv)
 						        close(TALKER);
       							//return false;
      						}
-				read_issued_till = i;
-				//read timeout
-				tread.tv_sec = read_timeout;
-				tread.tv_usec = 0; 
-				tptr = &tread;
+					read_issued_till = i;
+					//read timeout
+					tread.tv_sec = read_timeout;
+					tread.tv_usec = 0; 
+					tptr = &tread;
 
-				read_issued = true;
+					read_issued = true;
 
-				}
-				else
-				{
+					}
+					else
+					{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " no read commands"<< " \n");
+							printf("no read commands \n");
+							
+#endif	
 
 //no read commands to execute after this batch
-						tptr = NULL;
+						tupdate.tv_sec = update_timeout;
+						tupdate.tv_usec = 0;
+						tptr = &tupdate;
 						current_batch++;
+						read_issued = false;
 						i=(current_batch-1)*BATCH_SIZE;
 						while(leader_state.dlist.command[i] != -1)
 						{
@@ -542,7 +613,7 @@ int main(int argc,char **argv)
 
 
 
-				}
+					}
 				
 				
 
@@ -643,6 +714,8 @@ int main(int argc,char **argv)
 
 					for(i=0;i<MAX_SLOTS;i++)
 					{
+						if(read_commands[i] == command)
+							break;
 						if(read_commands[i] == -1)
 						{
 							read_commands[i] = command;
@@ -1007,9 +1080,12 @@ printf("!!!!here\n");
 					else
 					{
 						//no read commands to execute after this batch
-						tptr = NULL;
+						tupdate.tv_sec = update_timeout;
+						tupdate.tv_usec = 0;
+						tptr = &tupdate;
 						current_batch++;
 						i=(current_batch-1)*BATCH_SIZE;
+						read_issued = false;
 						while(leader_state.dlist.command[i] != -1)
 						{
 
@@ -1060,10 +1136,16 @@ printf("!!!!here\n");
 			{
 				read_command_counter = read_issued_till;
 				read_issued = false;
-				tptr = NULL;
-				
-				current_batch++;
-		
+				tupdate.tv_sec = update_timeout;
+				tupdate.tv_usec = 0;
+				tptr = &tupdate;
+				if(noupdate == false)
+				{
+					current_batch++;
+				}
+				else
+					noupdate = false; //do not increment current batch if it did not have any update commands
+	
 				i=(current_batch-1)*BATCH_SIZE;
 				while(leader_state.dlist.command[i] != -1)
 				{
@@ -1104,6 +1186,7 @@ printf("!!!!here\n");
 					i++;
 					
 				}
+				latest_replica_pid = -1; //clear this to detect timeout on update commands
 
 				
 			}
