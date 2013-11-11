@@ -23,13 +23,15 @@
 #define FILENAME_LENGTH 100
 #define COMMAND_LENGTH 1000
 
- 
+#define BATCH_SIZE 1
+#define READ_COMMAND 2
+
 #define DELIMITER ":"
 #define DELIMITER_SEC ";"
 #define DELIMITER_CMD "-"
 #define MAX_CLIENTS 2
 #define MAX_ACCEPTORS 3
-#define MAX_LEADERS 3
+#define MAX_LEADERS 1
 #define MAX_REPLICAS 2
 #define MAX_COMMANDERS 1000
 #define MAX_SCOUTS 1000

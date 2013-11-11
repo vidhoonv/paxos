@@ -146,28 +146,7 @@ bool broadcast_proposal(int talker_fd,int my_pid,struct PVAL proposal,struct soc
 	}
 return true;	
 }
-bool broadcast_replicas(int my_pid,int talker_fd,char send_buff[],struct sockaddr replica_addr[],socklen_t replica_addr_len[])
-{
-	int i,ret;
-	for(i=0;i<MAX_REPLICAS;i++)
-	{
-/* LEADER FAILURE DETECTION TEST CASE
-		if(i==1 && my_pid==0)
-			exit(-1);
-*/
-		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
-      			(struct sockaddr *)&replica_addr[i], replica_addr_len[i]);
-			
-		if (ret < 0)
-     		{
-      			perror("sendto ");
-		        close(talker_fd);
-      			return false;
-     		}
-		
-	}
-return true;
-}
+
 bool send_preemption(int talker_fd,int parent_id,char send_buff[],struct sockaddr parent_addr, socklen_t parent_addr_len)
 {
 
@@ -221,9 +200,9 @@ void* commander(void *thread_data) //acceptor list and replica list is global
 //comm sending variables
 	char send_buff[BUFSIZE];
 	int ret = 0;
-	struct sockaddr_in *replica_addr_in[MAX_REPLICAS],*acceptor_addr_in[MAX_ACCEPTORS];
-	struct sockaddr replica_addr[MAX_REPLICAS],acceptor_addr[MAX_ACCEPTORS];
-	socklen_t replica_addr_len[MAX_REPLICAS],acceptor_addr_len[MAX_ACCEPTORS];
+	struct sockaddr_in *replica_addr_in[MAX_REPLICAS],*acceptor_addr_in[MAX_ACCEPTORS],*leader_addr_in[MAX_LEADERS];
+	struct sockaddr replica_addr[MAX_REPLICAS],acceptor_addr[MAX_ACCEPTORS],*leader_addr[MAX_LEADERS];
+	socklen_t replica_addr_len[MAX_REPLICAS],acceptor_addr_len[MAX_ACCEPTORS],leader_addr_len[MAX_LEADERS];
 	//parent address
 	struct sockaddr_in *parent_addr_in;
 	struct sockaddr parent_addr;
@@ -290,7 +269,15 @@ void* commander(void *thread_data) //acceptor list and replica list is global
 		replica_addr_in[i]->sin_port  = htons(REPLICA_PORT_LIST[i]);  
 		replica_addr_len[i] = sizeof(replica_addr[i]);
 	}
-
+//setup leader addresses
+	for(i=0;i<MAX_LEADERS;i++)
+	{
+		leader_addr_in[i] = (struct sockaddr_in *)&(leader_addr[i]);
+		leader_addr_in[i]->sin_family = AF_INET;
+		memcpy(&leader_addr_in[i]->sin_addr, hp->h_addr, hp->h_length); 
+		leader_addr_in[i]->sin_port  = htons(LEADER_PORT_LIST[i]);  
+		leader_addr_len[i] = sizeof(leader_addr[i]);
+	}
 //setup parent address	(will be used for preemption
 	parent_addr_in = (struct sockaddr_in *)&(parent_addr);
 	parent_addr_in->sin_family = AF_INET;
@@ -394,6 +381,9 @@ void* commander(void *thread_data) //acceptor list and replica list is global
 						sprintf(send_buff,"%s%d",send_buff,my_pval.command);
 						strcat(send_buff,DELIMITER);
 
+						send_success(TALKER_COMMANDER,parent_id,send_buff,parent_addr,parent_addr_len);
+						
+/*
 						if(broadcast_replicas(my_pid,TALKER_COMMANDER,send_buff,replica_addr,replica_addr_len))
 						{
 #if DEBUG == 1
@@ -411,7 +401,7 @@ void* commander(void *thread_data) //acceptor list and replica list is global
 							//printf("broadcast of decision failed at commander %d\n",my_pid);	
 							pthread_exit(NULL);	
 						}
-
+*/
 						//job complete
 						pthread_exit(NULL);	
 					}

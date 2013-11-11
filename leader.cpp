@@ -22,7 +22,7 @@ LoggerPtr LeaderLogger(Logger::getLogger("leader"));
 #define DECREASE_INDEX 1
 
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002,4003};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000};//,4002,4003};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
@@ -71,6 +71,7 @@ struct STATE_LEADER
 	struct BALLOT_NUMBER ballot;
 	enum LEADER_STATUS lstatus;
 	struct PROPOSAL plist;
+	struct PROPOSAL dlist;
 	unsigned int preemption_timeout; //microseconds
 	float timeout_factor[2]; //0 - increase by factor; 1 - decrease by factor
 };
@@ -192,6 +193,28 @@ bool broadcast_leaders(int my_pid,int talker_fd,char send_buff[],struct sockaddr
 	}
 return true;
 }
+bool broadcast_replicas(int my_pid,int talker_fd,char send_buff[],struct sockaddr replica_addr[],socklen_t replica_addr_len[])
+{
+	int i,ret;
+	for(i=0;i<MAX_REPLICAS;i++)
+	{
+/* LEADER FAILURE DETECTION TEST CASE
+		if(i==1 && my_pid==0)
+			exit(-1);
+*/
+		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
+      			(struct sockaddr *)&replica_addr[i], replica_addr_len[i]);
+			
+		if (ret < 0)
+     		{
+      			perror("sendto ");
+		        close(talker_fd);
+      			return false;
+     		}
+		
+	}
+return true;
+}
 int main(int argc,char **argv)
 {
 	struct COMM_DATA leader_comm;
@@ -213,9 +236,9 @@ int main(int argc,char **argv)
 	int nread=0;	
 //comm sending variables
 	char send_buff[BUFSIZE];
-	struct sockaddr_in *leader_addr_in[MAX_LEADERS];
-	struct sockaddr leader_addr[MAX_LEADERS];
-	socklen_t leader_addr_len[MAX_LEADERS];
+	struct sockaddr_in *leader_addr_in[MAX_LEADERS],*replica_addr_in[MAX_REPLICAS];
+	struct sockaddr leader_addr[MAX_LEADERS],replica_addr[MAX_REPLICAS];
+	socklen_t leader_addr_len[MAX_LEADERS],replica_addr_len[MAX_REPLICAS];
 //misc
 	int i,ret=0,recv_pid,rc=0;
 	bool command_found = false;
@@ -240,9 +263,21 @@ int main(int argc,char **argv)
 	int leader_status[MAX_LEADERS];
 	int active_leader;
 	int ping_timeout = 5;
-
+	int read_timeout = 2;
 //timeout
-	struct timeval tv;
+	struct timeval tv,tread;
+	struct timeval *tptr=NULL;
+//command execution
+	int current_batch =1;
+//read command list
+	int read_commands[MAX_SLOTS];
+	int read_command_counter=0;
+	bool read_issued = false;
+	int uptodate_replicas[MAX_REPLICAS];
+	int replica_status[MAX_REPLICAS];
+	int latest_replica_pid = -1;
+	int read_issued_till = -1;
+
 	//check runtime arguments
 	if(argc!=2)
 	{
@@ -260,12 +295,20 @@ int main(int argc,char **argv)
 
 	std::fill(acc_pvals_command, acc_pvals_command + MAX_SLOTS, -1);
 	std::fill(leader_state.plist.command,leader_state.plist.command+MAX_SLOTS,-1);
+	std::fill(leader_state.dlist.command,leader_state.dlist.command+MAX_SLOTS,-1);
+	std::fill(read_commands,read_commands+MAX_SLOTS,-1);
 
 	std::fill(leader_status, leader_status + MAX_LEADERS, 1); //All leaders are alive
+	std::fill(uptodate_replicas,  uptodate_replicas + MAX_REPLICAS, 0); //All replicas are not uptodate initially
+	std::fill(replica_status,  replica_status + MAX_REPLICAS, 0); //All replicas status not alive initially
 
 	leader_state.preemption_timeout = 2000000;
 	leader_state.timeout_factor[INCREASE_INDEX] = 1.5;
 	leader_state.timeout_factor[DECREASE_INDEX] = 1000000;
+
+	tread.tv_sec = 0;
+	tread.tv_usec = 0;	
+	tptr = NULL;
 
 	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "timeout factors " << leader_state.timeout_factor[INCREASE_INDEX] << "," << leader_state.timeout_factor[DECREASE_INDEX]<<"\n");
 
@@ -289,7 +332,15 @@ int main(int argc,char **argv)
 		leader_addr_in[i]->sin_port  = htons(LEADER_PORT_LIST[i]);  
 		leader_addr_len[i] = sizeof(leader_addr[i]);
 	}
-
+	//setup replica addresses
+	for(i=0;i<MAX_REPLICAS;i++)
+	{
+		replica_addr_in[i] = (struct sockaddr_in *)&(replica_addr[i]);
+		replica_addr_in[i]->sin_family = AF_INET;
+		memcpy(&replica_addr_in[i]->sin_addr, hp->h_addr, hp->h_length); 
+		replica_addr_in[i]->sin_port  = htons(REPLICA_PORT_LIST[i]);  
+		replica_addr_len[i] = sizeof(replica_addr[i]);
+	}
 	//configure leader talker and listener ports	
 	//setup the leader 
 	if(configure_leader(my_pid,&leader_comm))
@@ -358,7 +409,7 @@ int main(int argc,char **argv)
 		FD_SET(LISTENER, &readfds);
 		if(my_pid == active_leader)
 		{
-			ret = select(maxfd, &readfds, NULL, NULL, NULL);  //blocks forever till it receives a message
+			ret = select(maxfd, &readfds, NULL, NULL,tptr);  //blocks forever till it receives a message
 		}
 		else
 			ret = select(maxfd, &readfds, NULL, NULL, &tv); 
@@ -372,6 +423,134 @@ int main(int argc,char **argv)
 		if(ret == 0)
 		{
 			printf("Time out while waiting for msgs\n");
+
+			if(active_leader == my_pid)
+			{
+
+				//timeout waiting for read commit
+				
+				//do read again to some other replica
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " detected replica "<< latest_replica_pid <<" Dead \n");
+							printf("detected replica %d dead\n",my_pid,latest_replica_pid);
+							
+#endif
+				replica_status[latest_replica_pid] = 0;
+
+				for(i=0;i<MAX_REPLICAS;i++)
+				{
+
+					if(replica_status[i] == 1 && uptodate_replicas[i] == 1)
+						break;
+				}
+				if(i== MAX_REPLICAS)
+				{
+					printf("!!finding uptodate replica failed\n");
+					return -1;
+				}
+				latest_replica_pid = i;
+				//send read commands to another replica
+				//issue read commands accumulated during this batch to this replica
+				i=read_command_counter;
+				if(read_commands[i] != -1)
+				{
+						//there is an accumulated read command
+						//sending data in the format
+						//DECISION:COMMANDER_ID:-1:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,-1);
+						strcat(send_buff,DELIMITER);
+
+					while(read_commands[i] != -1)
+					{
+					
+						sprintf(send_buff,"%s%d",send_buff,read_commands[i]);
+						strcat(send_buff,DELIMITER_SEC);
+					
+						i++;
+					}
+						strcat(send_buff,DELIMITER);
+						ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+      								(struct sockaddr *)&replica_addr[recv_pid], replica_addr_len[recv_pid]);
+			
+						if (ret < 0)
+     						{
+      							perror("sendto ");
+						        close(TALKER);
+      							//return false;
+     						}
+				read_issued_till = i;
+				//read timeout
+				tread.tv_sec = read_timeout;
+				tread.tv_usec = 0; 
+				tptr = &tread;
+
+				read_issued = true;
+
+				}
+				else
+				{
+
+//no read commands to execute after this batch
+						tptr = NULL;
+						current_batch++;
+						i=(current_batch-1)*BATCH_SIZE;
+						while(leader_state.dlist.command[i] != -1)
+						{
+
+						//DECISION BELONGS TO CURRENT BATCH - BROADCAST TO REPLICAS
+
+						//sending data in the format
+						//DECISION:COMMANDER_ID:SLOT_NUMBER:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,i);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,leader_state.dlist.command[i]);
+						strcat(send_buff,DELIMITER);
+
+						if(broadcast_replicas(my_pid,TALKER,send_buff,replica_addr,replica_addr_len))
+						{
+#if DEBUG == 1
+						LOG4CXX_TRACE(LeaderLogger,"LEader id: " << my_pid << " decision broadcasted \n");
+						//printf("decision broadcasted at LEADER %d\n",my_pid);
+							
+#endif
+	
+						//remove entry from proposal list 	
+						leader_state.plist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -1;
+						
+						}
+						else
+						{
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " decision broadcast failed \n");			
+						//printf("broadcast of decision failed at LEADER %d\n",my_pid);	
+						}
+
+						i++;
+					
+						}
+
+
+
+
+				}
+				
+				
+
+				
+
+			}
+			else
+			{
 			leader_status[active_leader] = 0;
 			active_leader = get_current_active_leader(leader_status);
 
@@ -419,6 +598,7 @@ int main(int argc,char **argv)
 				tv.tv_usec = 0;	
 				continue;
 
+			}
 			}			
 		}
 		if(FD_ISSET (LISTENER, &readfds))
@@ -442,8 +622,8 @@ int main(int argc,char **argv)
 //retrive recv_pid
 				recv_pid = atoi(strtok_r(NULL,DELIMITER,&tok));
 #if DEBUG==1
-			//	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << " from: " << recv_pid << "\n");
-				//printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << " from: " << recv_pid << "\n");
+				printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
 #endif		
 			if(strcmp(data,"PROPOSE") == 0)
 			{
@@ -457,6 +637,20 @@ int main(int argc,char **argv)
 				//retrive command
 				command = atoi(strtok_r(NULL,DELIMITER,&tok));
 				
+				if(slot_number == -1)
+				{
+					//received a proposal for read only command - store and continue
+
+					for(i=0;i<MAX_SLOTS;i++)
+					{
+						if(read_commands[i] == -1)
+						{
+							read_commands[i] = command;
+							break;
+						}
+					}
+					continue;
+				}
 				if(leader_state.plist.command[slot_number] == -1)
 				{
 					//new proposal
@@ -631,8 +825,51 @@ printf("!!!!here\n");
 #if DEBUG == 1
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " command "  << command << "\n");
 #endif
-				//remove entry from proposal list
-				leader_state.plist.command[slot_number] = -1;
+
+#if DEBUG == 1
+				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " current_batch "  << current_batch << "\n");
+#endif				
+				if(slot_number < current_batch*BATCH_SIZE)
+				{
+					//DECISION BELONGS TO CURRENT BATCH - BROADCAST TO REPLICAS
+
+						//sending data in the format
+						//DECISION:COMMANDER_ID:SLOT_NUMBER:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,slot_number);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,command);
+						strcat(send_buff,DELIMITER);
+
+					if(broadcast_replicas(my_pid,TALKER,send_buff,replica_addr,replica_addr_len))
+					{
+#if DEBUG == 1
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " decision broadcasted \n");
+						//printf("decision broadcasted at leader %d\n",my_pid);
+							
+#endif
+	
+						//remove entry from proposal list 	
+						leader_state.dlist.command[slot_number] = -1;
+						
+					}
+					else
+					{
+						LOG4CXX_TRACE(LeaderLogger,"leader id: " << my_pid << " decision broadcast failed \n");			
+						//printf("broadcast of decision failed at leader %d\n",my_pid);	
+					}
+				}
+				else
+				{
+					//DECISION DOES NOT BELONG TO CURRENT BATCH - STORE IN DECISION LIST
+					leader_state.dlist.command[slot_number] = command;
+
+				}
+
 #if DEBUG == 1
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " removed entry for slot "  << slot_number << "\n");
 #endif
@@ -702,6 +939,173 @@ printf("!!!!here\n");
 		    		    close(TALKER);
       					//return false;
      				}			
+			}
+			else if(strcmp(data,"COMMIT") == 0)
+			{
+
+				//expects data in the format
+				//COMMIT:<REPLICA_ID>:<CURRENT_SLOT_NUMBER>
+
+				slot_number = atoi(strtok_r(NULL,DELIMITER,&tok));
+				if(slot_number == current_batch*BATCH_SIZE)
+				{
+					//recv_pid has pid of latest replica that has executed all update commands in a batch
+					uptodate_replicas[recv_pid]=1;
+					replica_status[recv_pid]=1;
+
+					latest_replica_pid = recv_pid;
+					if(read_issued == false)
+					{
+					
+					//issue read commands accumulated during this batch to this replica
+					i=read_command_counter;
+					if(read_commands[i] != -1)
+					{
+						//there is an accumulated read command
+						//sending data in the format
+						//DECISION:COMMANDER_ID:-1:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,-1);
+						strcat(send_buff,DELIMITER);
+
+					while(read_commands[i] != -1)
+					{
+					
+						sprintf(send_buff,"%s%d",send_buff,read_commands[i]);
+						strcat(send_buff,DELIMITER_SEC);
+					
+						i++;
+					}
+						strcat(send_buff,DELIMITER);
+
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " sending read commands to replica " << recv_pid << " \n");
+							printf("sending read commands at leader %d to replica %d\n",my_pid,recv_pid);
+							
+#endif
+						ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+      								(struct sockaddr *)&replica_addr[recv_pid], replica_addr_len[recv_pid]);
+			
+						if (ret < 0)
+     						{
+      							perror("sendto ");
+						        close(TALKER);
+      							//return false;
+     						}
+					read_issued_till = i;
+					//read timeout
+					tread.tv_sec = read_timeout;
+					tread.tv_usec = 0; 
+					tptr = &tread;
+
+					read_issued = true;
+					}
+					else
+					{
+						//no read commands to execute after this batch
+						tptr = NULL;
+						current_batch++;
+						i=(current_batch-1)*BATCH_SIZE;
+						while(leader_state.dlist.command[i] != -1)
+						{
+
+						//DECISION BELONGS TO CURRENT BATCH - BROADCAST TO REPLICAS
+
+						//sending data in the format
+						//DECISION:COMMANDER_ID:SLOT_NUMBER:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,i);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,leader_state.dlist.command[i]);
+						strcat(send_buff,DELIMITER);
+
+						if(broadcast_replicas(my_pid,TALKER,send_buff,replica_addr,replica_addr_len))
+						{
+#if DEBUG == 1
+						LOG4CXX_TRACE(LeaderLogger,"LEader id: " << my_pid << " decision broadcasted \n");
+						//printf("decision broadcasted at LEADER %d\n",my_pid);
+							
+#endif
+	
+						//remove entry from proposal list 	
+						leader_state.plist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -1;
+						
+						}
+						else
+						{
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " decision broadcast failed \n");			
+						//printf("broadcast of decision failed at LEADER %d\n",my_pid);	
+						}
+
+						i++;
+					
+						}
+						
+					}
+					}
+				}
+				
+
+			}
+			else if(strcmp(data,"READ-COMMIT") == 0)
+			{
+				read_command_counter = read_issued_till;
+				read_issued = false;
+				tptr = NULL;
+				
+				current_batch++;
+		
+				i=(current_batch-1)*BATCH_SIZE;
+				while(leader_state.dlist.command[i] != -1)
+				{
+
+					//DECISION BELONGS TO CURRENT BATCH - BROADCAST TO REPLICAS
+
+						//sending data in the format
+						//DECISION:COMMANDER_ID:SLOT_NUMBER:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,i);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,leader_state.dlist.command[i]);
+						strcat(send_buff,DELIMITER);
+
+					if(broadcast_replicas(my_pid,TALKER,send_buff,replica_addr,replica_addr_len))
+					{
+#if DEBUG == 1
+						LOG4CXX_TRACE(LeaderLogger,"LEader id: " << my_pid << " decision broadcasted \n");
+						//printf("decision broadcasted at LEADER %d\n",my_pid);
+							
+#endif
+	
+						//remove entry from proposal list 	
+						leader_state.plist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -1;
+						
+					}
+					else
+					{
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " decision broadcast failed \n");			
+						//printf("broadcast of decision failed at LEADER %d\n",my_pid);	
+					}
+
+					i++;
+					
+				}
+
+				
 			}
 			else
 			{
