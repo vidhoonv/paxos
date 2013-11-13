@@ -488,7 +488,7 @@ int main(int argc,char **argv)
 						//there was no read commands that were sent and leader timed out
 						// in this case leader did not time out on read commit 
 						// so just wait for update commands
-						if(check_lease_status(lease_timestamp) == true)
+						if(leader_state.lstatus == LEADER_ACTIVE && check_lease_status(lease_timestamp) == true)
 						{
 							lease_critical = true;
 							CREATE_SCOUT_THREAD;
@@ -504,7 +504,7 @@ int main(int argc,char **argv)
 				
 				//do read again to some other replica
 
-					if(read_command_counter != 0)
+					if(read_command_counter != 0 && read_issued == true)
 					{
 						replica_status[latest_replica_pid] = 0;
 #if DEBUG == 1
@@ -538,7 +538,7 @@ int main(int argc,char **argv)
 						latest_replica_pid = i;
 					}
 				}
-					if(check_lease_status(lease_timestamp) == true)
+					if(leader_state.lstatus == LEADER_ACTIVE && check_lease_status(lease_timestamp) == true)
 					{
 						lease_critical = true;
 						CREATE_SCOUT_THREAD;
@@ -761,7 +761,21 @@ int main(int argc,char **argv)
 #if DEBUG==1
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << " from: " << recv_pid << "\n");
 				printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
-#endif		
+#endif
+				if(leader_state.lstatus == LEADER_ACTIVE && check_lease_status(lease_timestamp) == true)
+				{
+#if DEBUG == 1
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " lease found critical"<< " \n");
+						
+						
+#endif	
+						lease_critical = true;
+						CREATE_SCOUT_THREAD;
+						time(&lease_timestamp);
+						//current_batch++;
+						continue; //skip processing read commands till next update timeout
+				
+				}		
 			if(strcmp(data,"PROPOSE") == 0)
 			{
 				//received from REPLICA
@@ -1247,7 +1261,7 @@ exit(-1);
 					{
 
 						//check lease and renew if it is critical
-						if(check_lease_status(lease_timestamp) == true)
+						if(leader_state.lstatus == LEADER_ACTIVE && check_lease_status(lease_timestamp) == true)
 						{
 #if DEBUG == 1
 							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " lease found critical"<< " \n");
