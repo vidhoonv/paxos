@@ -1,5 +1,8 @@
 #include<stdio.h>
+#include<pthread.h>
+
 #include "pax_types.h"
+
 
 #define LISTENER_TEST_PORT 2312
 
@@ -21,7 +24,7 @@
 						} 
  	
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000};//,4002,4003};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};//,4003};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
@@ -37,9 +40,21 @@ struct STATE_ACCEPTOR
 {
 	struct BALLOT_NUMBER ballot;
 	struct ACCEPTED_SET  accepted;
-	
+	bool leased;	
+	time_t lease_timestamp;
 };
 
+bool check_lease_status(time_t lts)
+{//returns true when lease is critical (about to expire)
+	time_t cur_time;
+	time(&cur_time); 
+	//printf("\n\n clock compare %.f",difftime(cur_time,lts));;
+	if(difftime(cur_time,lts) >= LEASE_PERIOD)
+		return true;
+	else
+		return false;
+	
+}
 bool respond(int talker_fd, struct sockaddr leader_addr, char send_buff[])
 {
 
@@ -193,6 +208,7 @@ int main(int argc,char **argv)
 //protocol related
 	int slot_number=0, command=0;
 	struct BALLOT_NUMBER recv_ballot;
+
 //check runtime arguments
 	if(argc!=2)
 	{
@@ -203,6 +219,11 @@ int main(int argc,char **argv)
 
 //initializations
 	acc_state.accepted.current_length = 0;
+	acc_state.leased = false;
+
+	acc_state.ballot.bnum = -1;
+	acc_state.ballot.leader_id = -1;
+
 //hostname configuration
 	gethostname(hostname, sizeof(hostname));
 	hp = gethostbyname(hostname);
@@ -345,7 +366,11 @@ int main(int argc,char **argv)
 #if DEBUG==1
 				printf("recv ballot round: %d lid: %d\n",recv_ballot.bnum,recv_ballot.leader_id);
 #endif	
-				if(ballot_compare(recv_ballot,acc_state.ballot) > 0) 
+
+				if(check_lease_status(acc_state.lease_timestamp) == true)
+					acc_state.leased = false;	//if lease has timed out
+
+				if( (acc_state.leased == false) && (ballot_compare(recv_ballot,acc_state.ballot) > 0) )
 				{
 					//received ballot should be adopted
 					//ballot_copy(recv_ballot,&acc_state.ballot); //to be defined
@@ -354,6 +379,25 @@ int main(int argc,char **argv)
 #if DEBUG==1
 					printf("ballot round: %d lid: %d accepted\n",acc_state.ballot.bnum,acc_state.ballot.leader_id);
 #endif	
+
+					//adopted
+					//set leased flag to true
+					acc_state.leased = true;
+					//set callback for lease timer
+					time(&acc_state.lease_timestamp);					
+				}
+				else if(acc_state.leased == true && (ballot_compare(recv_ballot,acc_state.ballot) == 0))
+				{
+					
+					//lease renewal
+#if DEBUG==1
+					printf("lease renewed\n");
+#endif	
+					//set leased flag to true
+					acc_state.leased = true;
+					//set callback for lease timer
+					time(&acc_state.lease_timestamp);
+
 				}
 				else
 				{

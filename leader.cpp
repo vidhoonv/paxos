@@ -22,7 +22,7 @@ LoggerPtr LeaderLogger(Logger::getLogger("leader"));
 #define DECREASE_INDEX 1
 
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000};//,4002,4003};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};//,4003};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
@@ -54,12 +54,20 @@ void* scout(void*);
 
 
 				//manipulate the leaders pending proposals according the acc_pvals_map
-#define MANIPULATE_LEADER_PLIST(ACC_CMD_MAP,PROP_LIST) \
+#define MANIPULATE_LEADER_PLIST(ACC_CMD_MAP,PROP_LIST,DEC_LIST) \
 					for(i=0;i<MAX_SLOTS;i++) \
 					{ \
-						if(ACC_CMD_MAP[i] != -1 && PROP_LIST.command[i] != -1) \
+						if(ACC_CMD_MAP[i] != -1 && DEC_LIST.command[i] != -2) \
 							PROP_LIST.command[i] = ACC_CMD_MAP[i]; \
 					} 
+
+#define CREATE_SCOUT_THREAD \
+	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");	\
+	scout_create_args[count_scouts].parent_id = my_pid;	\
+	scout_create_args[count_scouts].my_pid = count_scouts+my_pid*MAX_SCOUTS_PER_LEADER; 	\
+	scout_create_args[count_scouts].my_ballot = leader_state.ballot; 	\
+	rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);	\
+	count_scouts++;
 
 enum LEADER_STATUS
 {
@@ -164,15 +172,17 @@ int get_current_active_leader(int lstatus[])
 		if(lstatus[i] == 1)
 			return i;
 	}
+	return -1;
 }
 bool broadcast_leaders(int my_pid,int talker_fd,char send_buff[],struct sockaddr leader_addr[],socklen_t leader_addr_len[])
 {
 	int i,ret;
 	for(i=0;i<MAX_LEADERS;i++)
 	{
-//network partition (simulated by msg loss)
+/*//NETWORK PARTITION TEST CASE (simulated by msg loss)
 		if(my_pid==0 && i==1 || my_pid==1 && i==0)
 			continue;
+*/
 /*
 //LEADER FAILURE DETECTION TEST CASE
 		if(my_pid == 0 && i==2)
@@ -214,6 +224,18 @@ bool broadcast_replicas(int my_pid,int talker_fd,char send_buff[],struct sockadd
 		
 	}
 return true;
+}
+
+bool check_lease_status(time_t lts)
+{//returns true when lease is critical (about to expire)
+	time_t cur_time;
+	time(&cur_time); 
+	printf("\n\n clock compare %.f",difftime(cur_time,lts));;
+	if(difftime(cur_time,lts) >= LEASE_PERIOD-LEASE_OFFSET)
+		return true;
+	else
+		return false;
+	
 }
 int main(int argc,char **argv)
 {
@@ -264,7 +286,7 @@ int main(int argc,char **argv)
 	int active_leader;
 	int ping_timeout = 5;
 	int read_timeout = 10;
-	int update_timeout = 5;
+	int update_timeout = 3;
 //timeout
 	struct timeval tv,tread,tupdate;
 	struct timeval *tptr=NULL;
@@ -280,6 +302,10 @@ int main(int argc,char **argv)
 	bool noupdate = false;
 	int read_issued_till = -1;
 
+//lease timer
+	bool lease_critical = false; 
+	time_t lease_timestamp;
+	
 	//check runtime arguments
 	if(argc!=2)
 	{
@@ -375,6 +401,9 @@ int main(int argc,char **argv)
 	scout_create_args[count_scouts].my_ballot = leader_state.ballot; 
 	rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 	count_scouts++;
+	
+	//store lease timestamp
+	time(&lease_timestamp);
 
 		//send alive message to all leader
 		printf("\nSending alive message to all leaders\n");
@@ -430,7 +459,7 @@ int main(int argc,char **argv)
 		{
 			printf("Time out while waiting for msgs %d read_cmd_counter %d\n",latest_replica_pid,read_command_counter);
 
-			if(active_leader == my_pid)
+			if(active_leader == my_pid && leader_state.lstatus == LEADER_ACTIVE)
 			{
 
 				if(latest_replica_pid == -1)
@@ -453,27 +482,37 @@ int main(int argc,char **argv)
 				}
 				else
 				{
-					if(read_issued == false)
+					if(read_command_counter >=0 && read_commands[read_command_counter] == -1)
 					{
 
 						//there was no read commands that were sent and leader timed out
 						// in this case leader did not time out on read commit 
 						// so just wait for update commands
+						if(check_lease_status(lease_timestamp) == true)
+						{
+							lease_critical = true;
+							CREATE_SCOUT_THREAD;
+							time(&lease_timestamp);
+						}
+							tupdate.tv_sec = update_timeout;
+							tupdate.tv_usec = 0;
+							tptr = &tupdate;
 						
-						tupdate.tv_sec = update_timeout;
-						tupdate.tv_usec = 0;
-						tptr = &tupdate;
 						continue;
 					}
 				//timeout waiting for read commit
 				
 				//do read again to some other replica
+
+					if(read_command_counter != 0)
+					{
+						replica_status[latest_replica_pid] = 0;
 #if DEBUG == 1
 							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " detected replica "<< latest_replica_pid <<" Dead \n");
 							printf("detected replica %d dead\n",my_pid,latest_replica_pid);
 							
 #endif
-					replica_status[latest_replica_pid] = 0;
+					}
 					if(current_batch == 1)
 					{
 						latest_replica_pid++;
@@ -499,12 +538,21 @@ int main(int argc,char **argv)
 						latest_replica_pid = i;
 					}
 				}
+					if(check_lease_status(lease_timestamp) == true)
+					{
+						lease_critical = true;
+						CREATE_SCOUT_THREAD;
+						time(&lease_timestamp);
+						//current_batch++;
+						continue;
+					}
 
 					//send read commands to another replica
 					//issue read commands accumulated during this batch to this replica
 					i=read_command_counter;
 					if(read_commands[i] != -1)
 					{
+						
 						//there is an accumulated read command
 						//sending data in the format
 						//DECISION:COMMANDER_ID:-1:COMMAND
@@ -567,7 +615,12 @@ int main(int argc,char **argv)
 						tupdate.tv_sec = update_timeout;
 						tupdate.tv_usec = 0;
 						tptr = &tupdate;
-						current_batch++;
+						if(noupdate == false)
+						{
+							current_batch++;
+						}
+						else
+							noupdate = false; //do not increment current batch if it did not have any update commands
 						read_issued = false;
 						i=(current_batch-1)*BATCH_SIZE;
 						while(leader_state.dlist.command[i] != -1)
@@ -596,8 +649,8 @@ int main(int argc,char **argv)
 #endif
 	
 						//remove entry from proposal list 	
-						leader_state.plist.command[slot_number] = -1;
-						leader_state.dlist.command[slot_number] = -1;
+						//leader_state.plist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -2;
 						
 						}
 						else
@@ -610,20 +663,27 @@ int main(int argc,char **argv)
 					
 						}
 
-
-
-
-					}
-				
-				
-
-				
+					}				
 
 			}
 			else
 			{
-			leader_status[active_leader] = 0;
-			active_leader = get_current_active_leader(leader_status);
+
+			if(active_leader != my_pid)
+			{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " leader "<<active_leader <<" is dead \n");
+							printf("leader %d is dead\n",active_leader);
+							
+#endif
+				leader_status[active_leader] = 0;
+				active_leader = get_current_active_leader(leader_status);
+			}
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " new active leader "<<active_leader <<" \n");
+							printf("new active leader %d \n",active_leader);
+							
+#endif
 
 			if(active_leader == my_pid)
 			{
@@ -661,6 +721,12 @@ int main(int argc,char **argv)
 							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcast failed \n");			
 							printf("broadcast of alive failed at leader %d\n",my_pid);	
 				}
+
+				//ping timeout
+				tupdate.tv_sec = ping_timeout;
+				tupdate.tv_usec = 0; 
+				tptr = &tupdate;
+				continue;
 			}
 			else
 			{
@@ -685,7 +751,7 @@ int main(int argc,char **argv)
             			return -1;
         		}		
 			recv_buff[nread] = 0;
-  			//printf("Leader id: %d received: %s\n",my_pid, recv_buff);
+  			printf("Leader id: %d received: %s\n",my_pid, recv_buff);
 
 			strcpy(buff_copy,recv_buff);			
 			data = strtok_r(buff_copy,DELIMITER,&tok);
@@ -739,7 +805,7 @@ int main(int argc,char **argv)
 					//add new proposal to plist
 					leader_state.plist.command[slot_number] = command;
 					
-					if(leader_state.lstatus == LEADER_ACTIVE)
+					if(leader_state.lstatus == LEADER_ACTIVE && lease_critical == false)
 					{
 #if DEBUG==1
 						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "is active now - creating commander thread" << count_commanders+my_pid*MAX_COMMANDERS_PER_LEADER << "\n");
@@ -785,20 +851,152 @@ int main(int argc,char **argv)
 
 				if(ballot_compare(recv_ballot,leader_state.ballot) == 0)
 				{
+
+					//leased
+					lease_critical = false;
+					//see if some reading are pending in current batch and increment current batch
 					
+					if(read_issued == false && latest_replica_pid != -1)
+					{
+						//this scout was sent to renew lease before sending read commands
+						//so send read commands
+//issue read commands accumulated during this batch to this replica
+					i=read_command_counter;
+					if(read_commands[i] != -1)
+					{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " constructing decision for read commands"<< " \n");
+							
+							
+#endif	
+						//there is an accumulated read command
+						//sending data in the format
+						//DECISION:COMMANDER_ID:-1:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,-1);
+						strcat(send_buff,DELIMITER);
+
+					while(read_commands[i] != -1)
+					{
+					
+						sprintf(send_buff,"%s%d",send_buff,read_commands[i]);
+						strcat(send_buff,DELIMITER_SEC);
+					
+						i++;
+					}
+						strcat(send_buff,DELIMITER);
+
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " sending read commands to replica " << recv_pid << " \n");
+							printf("sending read commands at leader %d to replica %d\n",my_pid,recv_pid);
+							
+#endif
+						ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+      								(struct sockaddr *)&replica_addr[latest_replica_pid], replica_addr_len[latest_replica_pid]);
+			
+						if (ret < 0)
+     						{
+      							perror("sendto ");
+						        close(TALKER);
+      							//return false;
+     						}
+					read_issued_till = i;
+					//read timeout
+					tread.tv_sec = read_timeout;
+					tread.tv_usec = 0; 
+					tptr = &tread;
+
+					read_issued = true;
+					}
+					else
+					{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " no read commands"<< " \n");
+							printf("no read commands \n");
+							
+#endif	
+						//no read commands to execute after this batch
+						tupdate.tv_sec = update_timeout;
+						tupdate.tv_usec = 0;
+						tptr = &tupdate;
+						if(noupdate == false)
+						{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " batch updated"<< " \n");
+							
+							
+#endif	
+							current_batch++;
+						}
+						else
+							noupdate = false; //do not increment current batch if it did not have any update commands
+						i=(current_batch-1)*BATCH_SIZE;
+						read_issued = false;
+						while(leader_state.dlist.command[i] != -1)
+						{
+
+						//DECISION BELONGS TO CURRENT BATCH - BROADCAST TO REPLICAS
+
+						//sending data in the format
+						//DECISION:COMMANDER_ID:SLOT_NUMBER:COMMAND
+						//printf("here\n");
+						strcpy(send_buff,"DECISION");
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,i);
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,leader_state.dlist.command[i]);
+						strcat(send_buff,DELIMITER);
+
+						if(broadcast_replicas(my_pid,TALKER,send_buff,replica_addr,replica_addr_len))
+						{
+#if DEBUG == 1
+						LOG4CXX_TRACE(LeaderLogger,"LEader id: " << my_pid << " decision broadcasted \n");
+						//printf("decision broadcasted at LEADER %d\n",my_pid);
+							
+#endif
+	
+						//remove entry from proposal list 	
+						//leader_state.plist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -2;
+						
+						}
+						else
+						{
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " decision broadcast failed \n");			
+						//printf("broadcast of decision failed at LEADER %d\n",my_pid);	
+						}
+
+						i++;
+					
+						}
+						
+					}
+
+
+
+					}
+					
+		
+											
 					if(pvals_str)
 					{
 						// fetch PVALS and insert into PVAL struct
 						//create a mapping such that acc_pvals[slot_number] = command with highest ballot 
 						POST_PROCESS_PVALS(acc_pvals_command,acc_pvals_hballot,pvals_str);
 						//manipulate the leaders pending proposals according the acc_pvals_map
-						MANIPULATE_LEADER_PLIST(acc_pvals_command,leader_state.plist);
+						MANIPULATE_LEADER_PLIST(acc_pvals_command,leader_state.plist,leader_state.dlist);
 					}
 					//create commander thread for each pending proposal with leader
 					for(i=0;i<MAX_SLOTS;i++)
 					{
 	
-						if(leader_state.plist.command[i] == -1)
+						if(leader_state.plist.command[i] == -1 || leader_state.dlist.command[i] == -2)
 							continue;
 
 printf("!!!!here\n");
@@ -819,7 +1017,8 @@ printf("!!!!here\n");
 					//change status to active
 					leader_state.lstatus = LEADER_ACTIVE;
 					//DECREASE TIMEOUT
-					leader_state.preemption_timeout = leader_state.preemption_timeout-leader_state.timeout_factor[DECREASE_INDEX];
+					if(leader_state.preemption_timeout>=leader_state.timeout_factor[DECREASE_INDEX])
+						leader_state.preemption_timeout = leader_state.preemption_timeout-leader_state.timeout_factor[DECREASE_INDEX];
 #if DEBUG==1
 						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " decreased timeout " << leader_state.preemption_timeout << "\n");
 #endif
@@ -877,6 +1076,7 @@ printf("!!!!here\n");
 						scout_create_args[count_scouts].my_ballot = leader_state.ballot; 
 						rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 						count_scouts++;
+						time(&lease_timestamp);
 				}
 			}
 			else if(strcmp(data,"DECISION") == 0)
@@ -884,6 +1084,7 @@ printf("!!!!here\n");
 				//recved from commander 
 				//expects data in the format
 				//DECISION:COMMANDER_ID:SLOT_NUMBER:COMMAND:
+				
 
 				//retrive decision components
 #if DEBUG == 1
@@ -901,8 +1102,11 @@ printf("!!!!here\n");
 
 #if DEBUG == 1
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " current_batch "  << current_batch << "\n");
-#endif				
-				if(slot_number < current_batch*BATCH_SIZE)
+#endif		
+/*//TEST CASE LEADER CRASH
+if(my_pid == 0 && slot_number == 1)
+exit(-1);		
+*/				if(slot_number < current_batch*BATCH_SIZE)
 				{
 					//DECISION BELONGS TO CURRENT BATCH - BROADCAST TO REPLICAS
 
@@ -927,7 +1131,7 @@ printf("!!!!here\n");
 #endif
 	
 						//remove entry from proposal list 	
-						leader_state.dlist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -2;
 						
 					}
 					else
@@ -1020,20 +1224,54 @@ printf("!!!!here\n");
 				//COMMIT:<REPLICA_ID>:<CURRENT_SLOT_NUMBER>
 
 				slot_number = atoi(strtok_r(NULL,DELIMITER,&tok));
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " current_batch"<<current_batch<<" \n");
+							printf("got commit current_batch %d \n",current_batch);
+							
+#endif	
 				if(slot_number == current_batch*BATCH_SIZE)
 				{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " got commit - proceeding to try reads"<< " \n");
+							printf("got commit - proceeding to try reads \n");
+							
+#endif	
 					//recv_pid has pid of latest replica that has executed all update commands in a batch
 					uptodate_replicas[recv_pid]=1;
 					replica_status[recv_pid]=1;
 
 					latest_replica_pid = recv_pid;
+					if(lease_critical == true) //lease was found critical and is being renewed
+						continue;
 					if(read_issued == false)
 					{
+
+						//check lease and renew if it is critical
+						if(check_lease_status(lease_timestamp) == true)
+						{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " lease found critical"<< " \n");
+							
+							
+#endif	
+							lease_critical = true;
+							CREATE_SCOUT_THREAD;
+							time(&lease_timestamp);
+							//current_batch++;
+							continue; //skip processing read commands till next update timeout
+				
+						}
+
 					
 					//issue read commands accumulated during this batch to this replica
 					i=read_command_counter;
 					if(read_commands[i] != -1)
 					{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " constructing decision for read commands"<< " \n");
+							
+							
+#endif	
 						//there is an accumulated read command
 						//sending data in the format
 						//DECISION:COMMANDER_ID:-1:COMMAND
@@ -1079,11 +1317,21 @@ printf("!!!!here\n");
 					}
 					else
 					{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " no read commands"<< " \n");
+							printf("no read commands \n");
+							
+#endif	
 						//no read commands to execute after this batch
 						tupdate.tv_sec = update_timeout;
 						tupdate.tv_usec = 0;
 						tptr = &tupdate;
-						current_batch++;
+						if(noupdate == false)
+						{
+							current_batch++;
+						}
+						else
+							noupdate = false; //do not increment current batch if it did not have any update commands
 						i=(current_batch-1)*BATCH_SIZE;
 						read_issued = false;
 						while(leader_state.dlist.command[i] != -1)
@@ -1112,8 +1360,8 @@ printf("!!!!here\n");
 #endif
 	
 						//remove entry from proposal list 	
-						leader_state.plist.command[slot_number] = -1;
-						leader_state.dlist.command[slot_number] = -1;
+						//leader_state.plist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -2;
 						
 						}
 						else
@@ -1173,8 +1421,8 @@ printf("!!!!here\n");
 #endif
 	
 						//remove entry from proposal list 	
-						leader_state.plist.command[slot_number] = -1;
-						leader_state.dlist.command[slot_number] = -1;
+						//leader_state.plist.command[slot_number] = -1;
+						leader_state.dlist.command[slot_number] = -2;
 						
 					}
 					else

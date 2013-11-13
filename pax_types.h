@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <sys/time.h>
 #include<stdlib.h>
+#include <time.h>
 
 #define DEBUG 1
 #define USERINPUT 1
@@ -31,7 +32,7 @@
 #define DELIMITER_CMD "-"
 #define MAX_CLIENTS 2
 #define MAX_ACCEPTORS 3
-#define MAX_LEADERS 1
+#define MAX_LEADERS 2
 #define MAX_REPLICAS 2
 #define MAX_COMMANDERS 1000
 #define MAX_SCOUTS 1000
@@ -57,6 +58,10 @@
 #define MAX_SLOTS 100
 #define MAX_ACC_NAME_LENGTH 200
 #define MAX_COMMANDS 100
+
+
+#define LEASE_PERIOD 20 //10 seconds
+#define LEASE_OFFSET 5 //leader spawns scout 5 seconds before scout expires
 
 enum COMMAND_TYPE
 {
