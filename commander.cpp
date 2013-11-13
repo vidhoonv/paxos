@@ -120,6 +120,10 @@ bool broadcast_proposal(int talker_fd,int my_pid,struct PVAL proposal,struct soc
 	char send_buff[BUFSIZE];
 	int i,ret;
 	char bstr[BUFSIZE];
+	socklen_t  addr_size;
+	printf("broadcst args %d %d\n",talker_fd,my_pid);
+
+	
 
 	PREPARE_PROPOSAL_STR(pstr,proposal);
 	//data sent in the format
@@ -133,8 +137,10 @@ bool broadcast_proposal(int talker_fd,int my_pid,struct PVAL proposal,struct soc
 
 	for(i=0;i<MAX_ACCEPTORS;i++)
 	{
-		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
-      			(struct sockaddr *)&dest_addr[i], dest_addr_len[i]);
+	addr_size = sizeof(dest_addr[i]);
+	//printf("len %d %d\n",  dest_addr_len[i],addr_size);
+	ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
+      			(struct sockaddr *)&dest_addr[i],addr_size);
 			
 		if (ret < 0)
      		{
@@ -251,7 +257,7 @@ void* commander(void *thread_data) //acceptor list and replica list is global
 	}
 	
 //setup acceptor addresses
-
+printf("list of acceptors\n");
 	for(i=0;i<MAX_ACCEPTORS;i++)
 	{
 		acceptor_addr_in[i] = (struct sockaddr_in *)&(acceptor_addr[i]);
@@ -259,7 +265,14 @@ void* commander(void *thread_data) //acceptor list and replica list is global
 		memcpy(&acceptor_addr_in[i]->sin_addr, hp->h_addr, hp->h_length); 
 		acceptor_addr_in[i]->sin_port  = htons(ACCEPTOR_PORT_LIST[i]);  
 		acceptor_addr_len[i] = sizeof(acceptor_addr[i]);
+
+		//printf("port of acceptor %d is %d of size %d \n",i,ACCEPTOR_PORT_LIST[i],acceptor_addr_len[i] );
+			//printf("Numeric: %u\n", inet_ntohl(dest_addr[i]->sin_addr.s_addr));
+	//printf("sin_port: %d %d\n", acceptor_addr_in[i]->sin_port, htons(3000+i));
+	//printf("saddr = %d, %s: %d\n", acceptor_addr_in[i]->sin_family, inet_ntoa(acceptor_addr_in[i]->sin_addr), acceptor_addr_in[i]->sin_port);
+	//printf("s_addr: %d\n", ntohl(acceptor_addr_in[i]->sin_addr.s_addr));
 	}
+	
 //setup replica addresses
 	for(i=0;i<MAX_REPLICAS;i++)
 	{

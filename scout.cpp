@@ -81,14 +81,14 @@ bool configure_scout(int my_pid,struct COMM_DATA *comm_scout)
         	close(listener_fd);
         	return false;
     	}
-    	printf("listener using port %d\n", ntohs(listener_addr.sin_port));
+    	//printf("listener using port %d\n", ntohs(listener_addr.sin_port));
 
 	//talker setup
 	if (( talker_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
 			perror("talker socket ");
        			return false;
 	}
-	printf("talker_fd = %d\n",talker_fd);
+	//printf("talker_fd = %d\n",talker_fd);
 
 	talker_addr.sin_family = AF_INET;
 	talker_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -125,6 +125,7 @@ bool broadcast_ballot(int talker_fd,int my_pid,struct BALLOT_NUMBER my_ballot,st
 
 	for(i=0;i<MAX_ACCEPTORS;i++)
 	{
+printf("len %d\n",  dest_addr_len[i]);
 		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
       			(struct sockaddr *)&dest_addr[i], dest_addr_len[i]);
 			
@@ -235,7 +236,7 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 	if(broadcast_ballot(TALKER_SCOUT,my_pid,my_ballot,acceptor_addr,acceptor_addr_len))
 	{
 #if DEBUG == 1
-		LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " pval broadcasted \n");
+		//LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " pval broadcasted \n");
 	//	printf("pval broadcasted at scout %d\n",my_pid);
 #endif
 	}
@@ -286,7 +287,7 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 //retrive recv_pid
 				recv_pid = atoi(strtok_r(NULL,DELIMITER,&tok));
 #if DEBUG==1
-				LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " received: " << recv_buff << "from: " << recv_pid << "\n");
+				//LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " received: " << recv_buff << "from: " << recv_pid << "\n");
 				//printf("recved msg from %d\n",recv_pid);
 #endif
 			if(strcmp(data,"PHASE1_RESPONSE") == 0)	
@@ -361,7 +362,7 @@ void* scout(void *thread_data) //acceptor list and replica list is global
      						}
 #if DEBUG==1
 
-						LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " adopted msg sent" << "\n");
+						//LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " adopted msg sent" << "\n");
 						//printf("adopted successfully sent from scout %d\n",my_pid);
 #endif	
 						//job complete
@@ -381,13 +382,13 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 					if(send_preemption(TALKER_SCOUT,parent_id,send_buff,parent_addr,parent_addr_len))
 					{
 #if DEBUG==1
-						LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " preemption msg sent" << "\n");
+						//LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " preemption msg sent" << "\n");
 						//printf("preemption successfully sent from scout %d\n",my_pid);
 #endif						
 					}
 					else
 					{
-						LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " preemption msg sending failed" << "\n");
+						//LOG4CXX_TRACE(ScoutLogger,"Scout id: " << my_pid << " preemption msg sending failed" << "\n");
 						//printf("preemption failed at scout %d",my_pid);	
 					}
 					return NULL;

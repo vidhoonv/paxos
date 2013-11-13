@@ -22,7 +22,7 @@ LoggerPtr LeaderLogger(Logger::getLogger("leader"));
 #define DECREASE_INDEX 1
 
 int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};//,4003};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002,4003};
 int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
@@ -179,8 +179,14 @@ bool broadcast_leaders(int my_pid,int talker_fd,char send_buff[],struct sockaddr
 	int i,ret;
 	for(i=0;i<MAX_LEADERS;i++)
 	{
-/*//NETWORK PARTITION TEST CASE (simulated by msg loss)
-		if(my_pid==0 && i==1 || my_pid==1 && i==0)
+//NETWORK PARTITION TEST CASE (simulated by msg loss)
+/*ld 0 in one partition and ld1 in another partition, but ld2 in both partitions
+if((my_pid==0 && i==1) || (my_pid==1 && i==0)  )
+			continue;
+*/
+/*
+//ld 0 in one partition and ld1 and ld2 in another partition (3 leaders)
+		if((my_pid==0 && i==1) || (my_pid==0 && i==2) || (my_pid==1 && i==0) || (my_pid==2 && i==0) )
 			continue;
 */
 /*
@@ -237,6 +243,18 @@ bool check_lease_status(time_t lts)
 		return false;
 	
 }
+
+bool check_ping_status(time_t lts)
+{//returns true when lease is critical (about to expire)
+	time_t cur_time;
+	time(&cur_time); 
+	printf("\n\n clock compare %.f",difftime(cur_time,lts));;
+	if(difftime(cur_time,lts) >= 15)
+		return true;
+	else
+		return false;
+	
+}
 int main(int argc,char **argv)
 {
 	struct COMM_DATA leader_comm;
@@ -284,7 +302,7 @@ int main(int argc,char **argv)
 //leader status
 	int leader_status[MAX_LEADERS];
 	int active_leader;
-	int ping_timeout = 5;
+	int ping_timeout = 20;
 	int read_timeout = 10;
 	int update_timeout = 3;
 //timeout
@@ -306,6 +324,7 @@ int main(int argc,char **argv)
 	bool lease_critical = false; 
 	time_t lease_timestamp;
 	
+	time_t ping_timestamp,cur_time;
 	//check runtime arguments
 	if(argc!=2)
 	{
@@ -341,6 +360,8 @@ int main(int argc,char **argv)
 	tupdate.tv_usec = 0;	
 
 	tptr = &tupdate; //intially providing update timeout
+
+	time(&ping_timestamp);
 
 	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "timeout factors " << leader_state.timeout_factor[INCREASE_INDEX] << "," << leader_state.timeout_factor[DECREASE_INDEX]<<"\n");
 
@@ -414,13 +435,14 @@ int main(int argc,char **argv)
 		
 		
 			
-		if (broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
+		if(broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
 		{
 #if DEBUG == 1
 							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcasted \n");
 							printf("alive broadcasted at leader %d\n",my_pid);
 							
 #endif
+			time(&ping_timestamp);
 							
 		}
 		else
@@ -671,6 +693,8 @@ int main(int argc,char **argv)
 
 			if(active_leader != my_pid)
 			{
+					//if(my_pid == 1 || my_pid == 2)
+						//exit(-1);
 #if DEBUG == 1
 							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " leader "<<active_leader <<" is dead \n");
 							printf("leader %d is dead\n",active_leader);
@@ -698,32 +722,10 @@ int main(int argc,char **argv)
 				rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 				count_scouts++;
 
-				//send ping message to active leader
-				printf("\nSending alive message to all leader\n");
-				strcpy(send_buff,"ALIVE"); 	
-				strcat(send_buff,DELIMITER);
-				sprintf(send_buff,"%s%d",send_buff,my_pid);	
-				strcat(send_buff,DELIMITER);
 		
-		
-			
-				if (broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
-				{
-#if DEBUG == 1
-							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcasted \n");
-							printf("alive broadcasted at leader %d\n",my_pid);
-							
-#endif
-							
-				}
-				else
-				{
-							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcast failed \n");			
-							printf("broadcast of alive failed at leader %d\n",my_pid);	
-				}
-
+				time(&lease_timestamp);
 				//ping timeout
-				tupdate.tv_sec = ping_timeout;
+				tupdate.tv_sec = ping_timeout/2;
 				tupdate.tv_usec = 0; 
 				tptr = &tupdate;
 				continue;
@@ -751,7 +753,7 @@ int main(int argc,char **argv)
             			return -1;
         		}		
 			recv_buff[nread] = 0;
-  			printf("Leader id: %d received: %s\n",my_pid, recv_buff);
+  			//printf("Leader id: %d received: %s\n",my_pid, recv_buff);
 
 			strcpy(buff_copy,recv_buff);			
 			data = strtok_r(buff_copy,DELIMITER,&tok);
@@ -762,6 +764,9 @@ int main(int argc,char **argv)
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " received: " << recv_buff << " from: " << recv_pid << "\n");
 				printf("Leader id: %d recved msg from %d\n",my_pid,recv_pid);
 #endif
+
+
+//renew lease if required
 				if(leader_state.lstatus == LEADER_ACTIVE && check_lease_status(lease_timestamp) == true)
 				{
 #if DEBUG == 1
@@ -865,7 +870,41 @@ int main(int argc,char **argv)
 
 				if(ballot_compare(recv_ballot,leader_state.ballot) == 0)
 				{
+					//change status to active
+					leader_state.lstatus = LEADER_ACTIVE;
 
+			if(check_ping_status(ping_timestamp) == true)
+			{
+	//send alive message to all leader
+		printf("\nSending alive message to all leaders\n");
+		strcpy(send_buff,"ALIVE"); 	
+		strcat(send_buff,DELIMITER);
+		sprintf(send_buff,"%s%d",send_buff,my_pid);	
+		strcat(send_buff,DELIMITER);
+		
+		
+			
+		if(broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
+		{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcasted \n");
+							printf("alive broadcasted at leader %d\n",my_pid);
+							
+#endif
+			time(&ping_timestamp);
+							
+		}
+		else
+		{
+			LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcast failed \n");			
+			printf("broadcast of alive failed at leader %d\n",my_pid);	
+		}
+			}
+			else
+			{
+				time(&cur_time);
+				tptr->tv_sec = 15-difftime(cur_time,ping_timestamp);
+			}
 					//leased
 					lease_critical = false;
 					//see if some reading are pending in current batch and increment current batch
@@ -1028,8 +1067,7 @@ printf("!!!!here\n");
 						count_commanders++;
 
 					}
-					//change status to active
-					leader_state.lstatus = LEADER_ACTIVE;
+					
 					//DECREASE TIMEOUT
 					if(leader_state.preemption_timeout>=leader_state.timeout_factor[DECREASE_INDEX])
 						leader_state.preemption_timeout = leader_state.preemption_timeout-leader_state.timeout_factor[DECREASE_INDEX];
@@ -1092,6 +1130,46 @@ printf("!!!!here\n");
 						count_scouts++;
 						time(&lease_timestamp);
 				}
+				else if(my_pid == active_leader)
+				{
+					//the lease of previous leader suspected dead has still not expired
+					//just broadcast alive and wait till that expires
+					if(check_ping_status(ping_timestamp) == true)
+					{
+						//send alive message to all leader
+						printf("\nSending alive message to all leaders\n");
+						strcpy(send_buff,"ALIVE"); 	
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);	
+						strcat(send_buff,DELIMITER);
+		
+		
+			
+						if(broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
+						{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcasted \n");
+							printf("alive broadcasted at leader %d\n",my_pid);
+							
+#endif
+							time(&ping_timestamp);
+							
+						}
+						else
+						{
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcast failed \n");			
+						printf("broadcast of alive failed at leader %d\n",my_pid);	
+						}
+					}
+					else
+					{
+						time(&cur_time);
+						tptr->tv_sec = 15-difftime(cur_time,ping_timestamp);
+					}	
+					printf("\did not send alive message to all leaders timeout left %d\n",tptr->tv_sec);	
+
+
+				}
 			}
 			else if(strcmp(data,"DECISION") == 0)
 			{
@@ -1117,8 +1195,14 @@ printf("!!!!here\n");
 #if DEBUG == 1
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " current_batch "  << current_batch << "\n");
 #endif		
-/*//TEST CASE LEADER CRASH
-if(my_pid == 0 && slot_number == 1)
+//TEST CASE LEADER CRASH
+/*
+//single leader failure test case
+if((my_pid == 0 && slot_number == 1) )
+exit(-1);		
+*//*
+//cascading leader failure test case
+if((my_pid == 0 && slot_number == 1) || (my_pid == 1 && slot_number == 2))
 exit(-1);		
 */				if(slot_number < current_batch*BATCH_SIZE)
 				{
@@ -1167,6 +1251,7 @@ exit(-1);
 			}
 			else if(strcmp(data,"ALIVE") == 0)
 			{
+printf("received alive timeout left %d\n",tv.tv_sec);
 				
 				if(active_leader != recv_pid)
 				{
@@ -1174,7 +1259,7 @@ exit(-1);
 					active_leader = recv_pid;
 				}	
 				//send ping message to active leader
-				printf("\nSending ping message to active leader\n");
+				//printf("\nSending ping message to active leader\n");
 				strcpy(send_buff,"PING"); 	
 				strcat(send_buff,DELIMITER);
 				sprintf(send_buff,"%s%d",send_buff,my_pid);	
@@ -1196,14 +1281,16 @@ exit(-1);
 			}
 			else if(strcmp(data,"PING") == 0)
 			{
+printf("received ping timeout left %d\n",tptr->tv_sec);
+
 			//send ping message to active leader
 				if(active_leader != my_pid)
 				{
-				leader_status[active_leader] = 0;
-				active_leader = my_pid;
+					leader_status[active_leader] = -1;
+					active_leader = my_pid;
+				
 
-
-				#if DEBUG==1
+#if DEBUG==1
 				LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");
 				//printf("Leader id: %d creating scout thread for ballot (%d,%d)!\n",my_pid,leader_state.ballot.bnum,leader_state.ballot.leader_id);
 #endif
@@ -1214,22 +1301,30 @@ exit(-1);
 				rc = pthread_create(&scout_thread[count_scouts], NULL, scout, (void *)&scout_create_args[count_scouts]);
 				count_scouts++;
 
+				time(&ping_timestamp);
+
 				}
-				printf("responding to ping message by active leader\n");
-				strcpy(send_buff,"ALIVE"); 	
-				strcat(send_buff,DELIMITER);
-				sprintf(send_buff,"%s%d",send_buff,my_pid);	
-				strcat(send_buff,DELIMITER);
+				if(check_ping_status(ping_timestamp) == true)
+				{
+						printf("responding to ping message by active leader\n");
+						strcpy(send_buff,"ALIVE"); 	
+						strcat(send_buff,DELIMITER);
+						sprintf(send_buff,"%s%d",send_buff,my_pid);	
+						strcat(send_buff,DELIMITER);
 				
-				rc = sendto(TALKER, send_buff, strlen(send_buff), 0, 
-      					(struct sockaddr *)&leader_addr[recv_pid], leader_addr_len[recv_pid]);
+						rc = sendto(TALKER, send_buff, strlen(send_buff), 0, 
+      							(struct sockaddr *)&leader_addr[recv_pid], leader_addr_len[recv_pid]);
 			
-				if (rc < 0)
-     				{
-      					perror("sendto ");
-		    		    close(TALKER);
-      					//return false;
-     				}			
+						if (rc < 0)
+     						{
+      							perror("sendto ");
+		    					    close(TALKER);
+      							//return false;
+     						}	
+	
+				}
+		
+		
 			}
 			else if(strcmp(data,"COMMIT") == 0)
 			{
