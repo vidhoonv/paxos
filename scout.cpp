@@ -333,7 +333,7 @@ void* scout(void *thread_data) //acceptor list and replica list is global
 				{
 					not_adopted -= 1;
 
-					if(not_adopted < MAX_ACCEPTORS/2)
+					if(not_adopted < MAX_ACCEPTORS*1.0/2.0)
 					{
 						//accepted from majority achieved - send command to all replicas
 						//sending data in the format
