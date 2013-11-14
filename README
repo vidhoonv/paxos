@@ -1,0 +1,111 @@
+CS 380D DISTRIBUTED COMPUTING I
+
+PROJECT II FALL 2013
+PAXOS PROTOCOL 
+
+
+VIDHOON VISWANATHAN
+LAYAMRUDHAA RV
+
+
+DESIGN
+======
+
+This code implements Paxos protocol using the following paper as reference material:
+
+PAXOS MADE MODERATELY COMPLEX (By Robbert van Rennesse)
+http://www.cs.utexas.edu/users/lorenzo/corsi/cs380d/papers/PaxosComplex.pdf
+
+It has six actors in the protocol:
+1)  Client
+2) Replica
+3) Leader
+4) Commander
+5) Scout
+6) Acceptor
+
+We implement multiple clients as distinct threads in a single client process.
+
+
+
+
+BANKING SERVICE
+===============
+
+We have implemented a basic distributed banking service to demonstrate functionality of PAXOS.
+We enable following operations through this service:
+1) DEPOSIT
+2) WITHDRAW
+3) BALANCE
+
+(1) and (2) are UPDATE commands.
+(3) is READ command for which the service has been optimized as described in a later section.
+
+ 
+SYSTEM DESCRIPTION
+==================
+
+The number of leaders, acceptors, replicas and clients can be specified in a header file.
+Command list files must be created for each client instance.
+Replica resource files contain details related to the banking application. In this case, we store two fields - ACCOUNT NAME and BALANCE.
+
+The replicas and acceptors are first started and then leaders are started. 
+The leader process with the lowest ID (given as run time argument) will be the active leader and other leaders will communicate with this leader to ensure this leader is alive. If the active leader fails, we use the approach described below to detect leader failure and choose the next active leader.
+
+
+INPUT COMMANDS
+==============
+
+We provide inputs using command list files which are read using File I/O.
+We do so in order to create slot contention to illustrate PAXOS functionality.
+
+FAILURE DETECTION OF LEADERS
+============================
+
+We use a pinging and AIMD (Additive Increase Multiplicative Decrease) timeout based approach to detect active leader failure. An active leader sends ALIVE messages to other leaders with a timeout and other leaders respond with a PING message on receipt of the ALIVE message. This handshake ensures that each leader knows about the active leader's status. When a leader times out on an ALIVE message, it will suspect that the active leader has failed . If it is the leader with the minimum id among all correct leaders, it will become the active leader and send ALIVE message. Otherwise, it will wait for the leader with the minimum id to send ALIVE message for initiating handshake. 
+
+If a leader suspects active leader to have failed, then it sends a scout to get its ballot adopted. If this scout gets PREEMPTED (during network partition), then AIMD is used to reduce the number of scouts spawned in the system.
+
+PROBLEM WITH APPROACH DESCRIBED IN PAPER FOR READ COMMANDS
+==========================================================
+
+The approach described in the paper suggests spawning a scout before executing READ commands to make sure that its ballot is current and no other leader has taken over the acceptors. But even after a leader gets its ballot adopted, while it is executing a read only command, another leader can get majority of acceptors to adopt its ballot and get UPDATE commands decided (for example, say when there is a network partition). As a result, when one leader is executing READ command on a single replica, another leader could perform UPDATE on some other replica(s). This results in 'stale' data at some replicas that could be returned while executing READ commands. This violates the safety property that is guaranteed by PAXOS.  
+
+This is the problem with the approach suggested in paper.
+
+PROPOSED SOLUTION FOR OPTIMIZING READ COMMANDS
+==============================================
+
+To solve the problem described above and at the same time bypass PAXOS for READ commands, we do the following:
+
+1) We implement leases. A scout of leader sends a lease period along with its ballot while trying to get its ballot adopted. If an acceptor adopts the ballot, it promises not to adopt any other leader's ballot (irrespective of that ballot value) until the lease period expires. The leader who gets majority of acceptors to adopt its ballot becomes the active leader and in turn gets a lease for the specified lease period for that majority of acceptors. This ensures that even in cases like network partition of leaders, the acceptors will continue to be under the control of the leader who leased them during the lease period. When the lease period is about to expire, the active leader renews the lease again to extend control over the majority of acceptors. Only when the current active leader fails and its lease thereby expires, a new leader would get its ballot adopted and then perform its changes. 
+
+2) We perform READ commands without slots or view computation or commanders that is we bypass PAXOS for READ commands. This is done as follows. An active leader stores READ commands which are received while the replicas perform UPDATE command for a slot. The replicas send a "COMMIT" message once they have performed the UPDATE command to the active leader. Now the leader sends the stored read operations to a SINGLE replica that sent a 'COMMIT' message (which is the latest replica). When the replica executes READ message, the active leader stores all UPDATE operations decided in its decision list. The replica sends a "READ-COMMIT" for successful read operation. On receiving this message, the active leader performs the next UPDATE command. Again, it checks for READ commands accumulated after receiving COMMIT and so on. If the SINGLE replica that receives READ command fails, then active leader times out on READ COMMIT and performs update on another replica that had sent COMMIT for the previous UPDATE operation. Since, all but one replicas can only fail, a leader is bound to receive atleast ONE "COMMIT" message for any UPDATE operation. Since, READ operation is sent only after receiving COMMIT, a replica is guaranteed to be at the latest state while performing READ operation (thus avoiding stale data).
+
+In summary,
+(1) ensures that an active leader keeps majority of acceptors in the control of active leader 
+(2) ensures that while READ commands are performed on a SINGLE replica, PAXOS is bypassed and the data returned is not stale.
+
+(1)+(2) form a practical solution for optimizing READ commands in a distributed application that uses PAXOS.  
+
+LOGGING
+=======
+
+We have used Log4cxx logging utility to help analysis and debug during development. Hence there is a compilation dependency on this tool. 
+
+HOW TO COMPILE
+===============
+
+vidhoon@vidhoonv:~/cs380d/pax$ g++ -o acc acceptor.cpp
+vidhoon@vidhoonv:~/cs380d/pax$ g++ -o rep replica.cpp
+vidhoon@vidhoonv:~/cs380d/pax$ g++ -o ld leader.cpp commander.cpp scout.cpp -lpthread  -I/usr/include /usr/lib/liblog4cxx.a -lapr-1 -laprutil-1  
+vidhoon@vidhoonv:~/cs380d/pax$ g++ -o client client.cpp -lpthread
+
+
+HOW TO RUN
+==========
+
+./acc <PID>
+./ld <PID>
+./client <number of client instances>
+./rep <PID>
