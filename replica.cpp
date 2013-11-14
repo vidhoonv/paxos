@@ -1,3 +1,14 @@
+/*
+CS 380D Distributing Computing
+
+PAXOS protocol
+==============
+
+Authors:
+@Vidhoon Viswanathan
+@Layamrudha RV
+
+*/
 #include<stdio.h>
 #include"pax_types.h"
 #include<algorithm>

@@ -1,3 +1,14 @@
+/*
+CS 380D Distributing Computing
+
+PAXOS protocol
+==============
+
+Authors:
+@Vidhoon Viswanathan
+@Layamrudha RV
+
+*/
 //logging
 #include <log4cxx/logger.h>
 #include <log4cxx/xml/domconfigurator.h>

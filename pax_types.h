@@ -1,3 +1,14 @@
+/*
+CS 380D Distributing Computing
+
+PAXOS protocol
+==============
+
+Authors:
+@Vidhoon Viswanathan
+@Layamrudha RV
+
+*/
 #ifndef PAXTYPES_H
 #define PAXTYPES_H
 
