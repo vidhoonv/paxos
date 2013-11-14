@@ -125,7 +125,7 @@ bool broadcast_ballot(int talker_fd,int my_pid,struct BALLOT_NUMBER my_ballot,st
 
 	for(i=0;i<MAX_ACCEPTORS;i++)
 	{
-printf("len %d\n",  dest_addr_len[i]);
+
 		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
       			(struct sockaddr *)&dest_addr[i], dest_addr_len[i]);
 			

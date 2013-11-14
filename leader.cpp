@@ -21,9 +21,9 @@ LoggerPtr LeaderLogger(Logger::getLogger("leader"));
 #define INCREASE_INDEX 0
 #define DECREASE_INDEX 1
 
-int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008,3010,3012,3014,3016,3018};
-int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002,4003};
-int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};
+int ACCEPTOR_PORT_LIST[MAX_ACCEPTORS] = {3000,3002,3004};//,3006,3008};//,3010,3012,3014,3016,3018};
+int LEADER_PORT_LIST[MAX_LEADERS] = {4000,4002};//,4003};
+int REPLICA_PORT_LIST[MAX_REPLICAS] = {2000,2002};//,2004};
 //int COMMANDER_PORT_LIST[MAX_COMMANDERS] = {5000,5001,5002,5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,5016,5017,5018,5019,5020,5021,5022,5023,5024,5025,5026,5027,5028,5029,5030,5031,5032,5033,5034,5035,5036,5037,5038,5039,5040,5041,5042,5043,5044,5045,5046,5047,5048,5049,5050,5051,5052,5053,5054,5055,5056,5057,5058,5059};
 //int SCOUT_PORT_LIST[MAX_SCOUTS] = {6000,6001,6002,6003,6004,6005,6006,6007,6008,6009,6010,6011,6012,6013,6014,6015,6016,6017,6018,6019,6020,6021,6022,6023,6024,6025,6026,6027,6028,6029,6030,6031,6032,6033,6034,6035,6036,6037,6038,6039,6040,6041,6042,6043,6044,6045,6046,6047,6048,6049,6060,6051,6052,6053,6054,6055,6056,6057,6058,6059};
 
@@ -62,7 +62,7 @@ void* scout(void*);
 					} 
 
 #define CREATE_SCOUT_THREAD \
-	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");	\
+	LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << "macro creating scout thread for ballot (" << leader_state.ballot.bnum << "," << leader_state.ballot.leader_id <<  ") !\n");	\
 	scout_create_args[count_scouts].parent_id = my_pid;	\
 	scout_create_args[count_scouts].my_pid = count_scouts+my_pid*MAX_SCOUTS_PER_LEADER; 	\
 	scout_create_args[count_scouts].my_ballot = leader_state.ballot; 	\
@@ -193,7 +193,13 @@ if((my_pid==0 && i==1) || (my_pid==1 && i==0)  )
 //LEADER FAILURE DETECTION TEST CASE
 		if(my_pid == 0 && i==2)
 			exit(-1);
-*/		if(i!=my_pid)
+*/
+/*
+//TESTCASE LEADER FAILURE DETECTION (SEND alive to leader1 and leader0 dies)
+		if(my_pid ==  0 && i == 2)
+			exit(-1);
+*/
+		if(i!=my_pid)
 		{
 		ret = sendto(talker_fd, send_buff, strlen(send_buff), 0, 
       			(struct sockaddr *)&leader_addr[i], leader_addr_len[i]);
@@ -303,7 +309,7 @@ int main(int argc,char **argv)
 	int leader_status[MAX_LEADERS];
 	int active_leader;
 	int ping_timeout = 20;
-	int read_timeout = 10;
+	int read_timeout = 1;
 	int update_timeout = 3;
 //timeout
 	struct timeval tv,tread,tupdate;
@@ -317,6 +323,7 @@ int main(int argc,char **argv)
 	int uptodate_replicas[MAX_REPLICAS];
 	int replica_status[MAX_REPLICAS];
 	int latest_replica_pid = -1;
+	int read_replica = -1;
 	bool noupdate = false;
 	int read_issued_till = -1;
 
@@ -497,7 +504,7 @@ int main(int argc,char **argv)
 							
 #endif
 					//no way to determine live replica at first - so proceed by trail and error basis
-					latest_replica_pid = 0;
+					read_replica = 0; 
 					//set boolean flag 
 					noupdate = true;
 
@@ -512,6 +519,11 @@ int main(int argc,char **argv)
 						// so just wait for update commands
 						if(leader_state.lstatus == LEADER_ACTIVE && check_lease_status(lease_timestamp) == true)
 						{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " there was no read commands that were sent and leader timed out \n");
+							printf("there was no read commands that were sent and leader timed out \n");
+							
+#endif
 							lease_critical = true;
 							CREATE_SCOUT_THREAD;
 							time(&lease_timestamp);
@@ -526,15 +538,15 @@ int main(int argc,char **argv)
 				
 				//do read again to some other replica
 
-					if(read_command_counter != 0 && read_issued == true)
+					if(read_issued == true)
 					{
-						replica_status[latest_replica_pid] = 0;
+						replica_status[read_replica] = 0;
 #if DEBUG == 1
-							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " detected replica "<< latest_replica_pid <<" Dead \n");
-							printf("detected replica %d dead\n",my_pid,latest_replica_pid);
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " detected replica "<< read_replica <<" Dead \n");
+							printf("detected replica %d dead\n",read_replica);
 							
 #endif
-					}
+					}/*
 					if(current_batch == 1)
 					{
 						latest_replica_pid++;
@@ -544,7 +556,7 @@ int main(int argc,char **argv)
 							return -1;
 						}
 					}
-					else
+					else*/
 					{
 						for(i=0;i<MAX_REPLICAS;i++)
 						{
@@ -557,14 +569,23 @@ int main(int argc,char **argv)
 							printf("!!finding uptodate replica failed\n");
 							return -1;
 						}	
-						latest_replica_pid = i;
+						read_replica = i;
 					}
 				}
 					if(leader_state.lstatus == LEADER_ACTIVE && check_lease_status(lease_timestamp) == true)
 					{
 						lease_critical = true;
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " before sending read commands \n");
+							printf("before sending read commands \n");
+							
+#endif
 						CREATE_SCOUT_THREAD;
 						time(&lease_timestamp);
+						//read timeout
+						tread.tv_sec = update_timeout;
+						tread.tv_usec = 0; 
+						tptr = &tread;
 						//current_batch++;
 						continue;
 					}
@@ -608,7 +629,7 @@ int main(int argc,char **argv)
 #endif	
 
 						ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
-      								(struct sockaddr *)&replica_addr[latest_replica_pid], replica_addr_len[latest_replica_pid]);
+      								(struct sockaddr *)&replica_addr[read_replica], replica_addr_len[read_replica]);
 			
 						if (ret < 0)
      						{
@@ -623,6 +644,8 @@ int main(int argc,char **argv)
 					tptr = &tread;
 
 					read_issued = true;
+					printf("read command sent \n");
+					continue;
 
 					}
 					else
@@ -693,8 +716,7 @@ int main(int argc,char **argv)
 
 			if(active_leader != my_pid)
 			{
-					//if(my_pid == 1 || my_pid == 2)
-						//exit(-1);
+					
 #if DEBUG == 1
 							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " leader "<<active_leader <<" is dead \n");
 							printf("leader %d is dead\n",active_leader);
@@ -753,7 +775,7 @@ int main(int argc,char **argv)
             			return -1;
         		}		
 			recv_buff[nread] = 0;
-  			//printf("Leader id: %d received: %s\n",my_pid, recv_buff);
+  			printf("Leader id: %d received: %s\n",my_pid, recv_buff);
 
 			strcpy(buff_copy,recv_buff);			
 			data = strtok_r(buff_copy,DELIMITER,&tok);
@@ -773,6 +795,11 @@ int main(int argc,char **argv)
 						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " lease found critical"<< " \n");
 						
 						
+#endif
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " in while fdset\n");
+							printf("in while fdset \n");
+							
 #endif	
 						lease_critical = true;
 						CREATE_SCOUT_THREAD;
@@ -780,6 +807,41 @@ int main(int argc,char **argv)
 						//current_batch++;
 						continue; //skip processing read commands till next update timeout
 				
+				}
+				if(my_pid==active_leader)
+				{
+				if(check_ping_status(ping_timestamp) == true)
+				{
+					//send alive message to all leader
+					printf("\nSending alive message to all leaders\n");
+					strcpy(send_buff,"ALIVE"); 	
+					strcat(send_buff,DELIMITER);
+					sprintf(send_buff,"%s%d",send_buff,my_pid);	
+					strcat(send_buff,DELIMITER);
+		
+		
+			
+					if(broadcast_leaders(my_pid,TALKER,send_buff,leader_addr,leader_addr_len))
+					{
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcasted \n");
+							printf("alive broadcasted at leader %d\n",my_pid);
+							
+#endif
+					time(&ping_timestamp);
+							
+					}
+					else
+					{
+						LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " alive broadcast failed \n");			
+						printf("broadcast of alive failed at leader %d\n",my_pid);	
+					}
+				}
+				else
+				{
+					time(&cur_time);
+					tptr->tv_sec = 15-difftime(cur_time,ping_timestamp);
+				}
 				}		
 			if(strcmp(data,"PROPOSE") == 0)
 			{
@@ -909,7 +971,7 @@ int main(int argc,char **argv)
 					lease_critical = false;
 					//see if some reading are pending in current batch and increment current batch
 					
-					if(read_issued == false && latest_replica_pid != -1)
+					if( (read_issued == false && read_replica != -1) || (read_issued == true && read_commands[read_command_counter] != -1))
 					{
 						//this scout was sent to renew lease before sending read commands
 						//so send read commands
@@ -944,12 +1006,12 @@ int main(int argc,char **argv)
 						strcat(send_buff,DELIMITER);
 
 #if DEBUG == 1
-							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " sending read commands to replica " << recv_pid << " \n");
-							printf("sending read commands at leader %d to replica %d\n",my_pid,recv_pid);
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " sending read commands to replica " << read_replica << " \n");
+							printf("sending read commands at leader %d to replica %d\n",my_pid,read_replica);
 							
 #endif
 						ret = sendto(TALKER, send_buff, strlen(send_buff), 0, 
-      								(struct sockaddr *)&replica_addr[latest_replica_pid], replica_addr_len[latest_replica_pid]);
+      								(struct sockaddr *)&replica_addr[read_replica], replica_addr_len[read_replica]);
 			
 						if (ret < 0)
      						{
@@ -1166,7 +1228,7 @@ printf("!!!!here\n");
 						time(&cur_time);
 						tptr->tv_sec = 15-difftime(cur_time,ping_timestamp);
 					}	
-					printf("\did not send alive message to all leaders timeout left %d\n",tptr->tv_sec);	
+					//printf("\did not send alive message to all leaders timeout left %d\n",tptr->tv_sec);	
 
 
 				}
@@ -1251,7 +1313,7 @@ exit(-1);
 			}
 			else if(strcmp(data,"ALIVE") == 0)
 			{
-printf("received alive timeout left %d\n",tv.tv_sec);
+//printf("received alive timeout left %d\n",tv.tv_sec);
 				
 				if(active_leader != recv_pid)
 				{
@@ -1281,7 +1343,7 @@ printf("received alive timeout left %d\n",tv.tv_sec);
 			}
 			else if(strcmp(data,"PING") == 0)
 			{
-printf("received ping timeout left %d\n",tptr->tv_sec);
+//printf("received ping timeout left %d\n",tptr->tv_sec);
 
 			//send ping message to active leader
 				if(active_leader != my_pid)
@@ -1338,16 +1400,18 @@ printf("received ping timeout left %d\n",tptr->tv_sec);
 							printf("got commit current_batch %d \n",current_batch);
 							
 #endif	
+				
 				if(slot_number == current_batch*BATCH_SIZE)
 				{
+					uptodate_replicas[recv_pid]=1;
+					replica_status[recv_pid]=1;
 #if DEBUG == 1
 							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " got commit - proceeding to try reads"<< " \n");
 							printf("got commit - proceeding to try reads \n");
 							
 #endif	
 					//recv_pid has pid of latest replica that has executed all update commands in a batch
-					uptodate_replicas[recv_pid]=1;
-					replica_status[recv_pid]=1;
+					
 
 					latest_replica_pid = recv_pid;
 					if(lease_critical == true) //lease was found critical and is being renewed
@@ -1363,6 +1427,11 @@ printf("received ping timeout left %d\n",tptr->tv_sec);
 							
 							
 #endif	
+#if DEBUG == 1
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " in commit \n");
+							printf("in commit \n");
+							
+#endif
 							lease_critical = true;
 							CREATE_SCOUT_THREAD;
 							time(&lease_timestamp);
@@ -1416,6 +1485,7 @@ printf("received ping timeout left %d\n",tptr->tv_sec);
 						        close(TALKER);
       							//return false;
      						}
+					read_replica = recv_pid;
 					read_issued_till = i;
 					//read timeout
 					tread.tv_sec = read_timeout;
@@ -1486,6 +1556,12 @@ printf("received ping timeout left %d\n",tptr->tv_sec);
 					}
 					}
 				}
+				else
+				{
+							LOG4CXX_TRACE(LeaderLogger,"Leader id: " << my_pid << " got commit for a slot from previous batch \n");			
+							printf("got commit for a slot from previous batch at LEADER %d\n",my_pid);		
+
+				}
 				
 
 			}
@@ -1543,7 +1619,8 @@ printf("received ping timeout left %d\n",tptr->tv_sec);
 					i++;
 					
 				}
-				latest_replica_pid = -1; //clear this to detect timeout on update commands
+				latest_replica_pid = -1;
+				read_replica = -1; //clear this to detect timeout on update commands
 
 				
 			}

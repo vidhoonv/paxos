@@ -32,7 +32,7 @@
 #define DELIMITER_CMD "-"
 #define MAX_CLIENTS 1
 #define MAX_ACCEPTORS 3
-#define MAX_LEADERS 3
+#define MAX_LEADERS 2
 #define MAX_REPLICAS 2
 #define MAX_COMMANDERS 2000
 #define MAX_SCOUTS 2000
